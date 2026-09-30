@@ -302,6 +302,7 @@ Important workflow tests:
 - central dedicated-user unit + protected environment file
 - agent dedicated-user unit + venv executable
 - startup configuration validation
+- packaged target-host preflight for Compose/journald/cysystemd/systemd/sudoers readiness
 - lint/type checks (still pending; do not claim them from this offline build)
 - clean-checkout unit/compile/wheel verification in CI across Python 3.11-3.13
 - complete automated test suite

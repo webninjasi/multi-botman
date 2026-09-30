@@ -90,6 +90,8 @@ Use a fake journal adapter for deterministic unit tests; reserve real cysystemd 
 
 ## Integration — Compose stack
 
+Before the runtime-specific scenarios, run `botman-target-preflight` as the target management identity with the configured Compose command and require a clean result for the host-level checks.
+
 Create a test Compose project with at least two managed services, each from a separate source fixture/repo.
 
 - one Compose file + two apps
@@ -104,7 +106,7 @@ Run against supported Docker Compose and Podman Compose environments.
 
 ## Integration — journald
 
-On real supported hosts:
+On real supported hosts, first run the target preflight as the management identity. After `/config agent sync`, rerun it with `--require-active --app STACK.APP` for at least one configured app. Then verify:
 
 - logging driver/tag produces expected `SYSLOG_IDENTIFIER`
 - cysystemd filter returns only selected app

@@ -6,7 +6,7 @@ This is the operator runbook for installing Botman and getting an application to
 
 As of 2026-09-30, the central Discord bot, lifecycle commands, admin onboarding commands, Compose upload/validation, Git deploy-key setup, env management, `/update`, `/livelogs start|stop`, and `/logs tail|download` are implemented and unit-tested. The target `botman-log-agent`, `botman-log-export`, and systemd unit are included. Target OS/package provisioning remains a one-time manual step documented below. Stack-scoped config/Git/env mutations serialize with lifecycle/deployment operations; queued runtime work reloads config after taking that lock, and agent sync serializes with live-log state changes.
 
-Current automated result: **155 tests passed**. Real VPS Docker/Podman/cysystemd and Discord test-guild acceptance are still required before calling v1 production-complete.
+Current automated result: **162 tests passed**. Real VPS Docker/Podman/cysystemd and Discord test-guild acceptance are still required before calling v1 production-complete.
 
 Do not deploy anything under `reference/`.
 
@@ -555,6 +555,17 @@ sudo -u botmgr sudo -n systemctl is-active botman-log-agent.service || true
 
 Use `sudo -u botman ...` for a local target.
 
+Before returning to Discord, run the packaged preflight as the **same management identity Botman uses**. This checks the Compose command, required groups and directory modes, persistent journald policy, cysystemd 2.x, direct system-journal access, installed/enabled unit, and the exact non-interactive sudo `systemctl status` command:
+
+```bash
+sudo -u botmgr /opt/botman-agent/.venv/bin/botman-target-preflight \
+  --management-user botmgr \
+  --compose-command "docker compose" \
+  --journal-max-use 1G
+```
+
+For Podman, use `--compose-command "podman compose"`. For a central/local target, run it as `botman` and pass `--management-user botman`. Every line should report `PASS`; fix failures before enabling live logs. This preflight does **not** replace the real Docker/Podman deployment or Discord test-guild acceptance in `TEST_PLAN.md`.
+
 ### 10.5 Generate/sync target agent config from Discord
 
 After at least the server/stack/app config exists in Botman:
@@ -580,6 +591,18 @@ sudo -u botmgr /opt/botman-agent/.venv/bin/botman-log-export \
 ```
 
 The agent/exporter uses an internal stack-qualified key (`STACK.APP`) so repeated app names on one VPS cannot collide. The last command verifies the management account can read that app's journald tag. Replace `botmgr` with `botman` on a local target.
+
+After `sync` succeeds, the preflight can also require the agent to be active and exercise the same historical reader through the generated protected config:
+
+```bash
+sudo -u botmgr /opt/botman-agent/.venv/bin/botman-target-preflight \
+  --management-user botmgr \
+  --compose-command "docker compose" \
+  --require-active \
+  --app STACK.APP
+```
+
+An app with no retained entries can still pass; this check verifies access/configuration, not that the app has emitted a log line.
 
 ### 10.6 Start/stop live logs from the app's command channel
 
@@ -641,11 +664,12 @@ For a deployable app, all of these should be true:
 
 If Discord/journald logging is required, also verify:
 
-12. The one-time target log-agent package/systemd/group/sudoers setup is complete.
+12. The one-time target log-agent package/systemd/group/sudoers setup is complete and `botman-target-preflight` passes as the management identity.
 13. `/config agent sync` and `/config agent status` succeed for the target server.
-14. The app's Compose journald tag is visible to `botman-log-export`.
-15. `/livelogs start APP` delivers new journal entries.
-16. `/logs tail APP` and a small `/logs download` range both work.
+14. `botman-target-preflight --require-active --app STACK.APP` passes after sync.
+15. The app's Compose journald tag is visible to `botman-log-export`.
+16. `/livelogs start APP` delivers new journal entries.
+17. `/logs tail APP` and a small `/logs download` range both work.
 
 These logging steps are implemented, but real-host cysystemd/Discord acceptance is still required before production sign-off.
 

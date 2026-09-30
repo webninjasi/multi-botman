@@ -34,6 +34,7 @@ Updated 2026-09-30 for the fresh Botman implementation.
 - `src/botman_agent/live.py` — per-app delivery/checkpoint/supervision
 - `src/botman_agent/main.py` — executable multi-app live agent runtime
 - `src/botman_agent/export.py` — finite cysystemd historical reader, gzip part exporter, CLI
+- `src/botman_agent/preflight.py` — target Compose/systemd/journald/cysystemd/sudoers readiness CLI
 
 ## Packaging/runtime
 
@@ -42,14 +43,14 @@ Updated 2026-09-30 for the fresh Botman implementation.
 - `systemd/botman-log-agent.service`
 - `config.example.yaml`
 - `.github/workflows/ci.yml` — clean-checkout Python 3.11-3.13 test/compile/wheel verification
-- `scripts/verify_wheel.py` — required-module and console-entry-point wheel check
+- `scripts/verify_wheel.py` — required-module and console-entry-point wheel check, including target preflight
 
 ## Tests
 
 - `tests/central/`
 - `tests/agent/`
 
-Current fresh result: **155 passed**.
+Current fresh result: **162 passed**.
 
 ## Operator/design documentation
 

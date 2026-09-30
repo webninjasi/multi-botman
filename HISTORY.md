@@ -1,5 +1,12 @@
 # Project History and Pivots
 
+## 2026-09-30 — Target acceptance preflight
+
+- Added `botman-target-preflight` to make the real-VPS readiness gate repeatable before Discord acceptance.
+- The preflight checks the configured Compose command, management/agent journal groups, protected agent directory modes, persistent journald policy/cap, cysystemd 2.x availability, direct system-journal access, installed/enabled agent unit, and the exact non-interactive sudo status command used by central.
+- Optional `--require-active --app STACK.APP` checks the running agent plus an actual `botman-log-export` read through the protected stack-qualified app mapping.
+- Added wheel-entry verification and focused tests for the new CLI. Automated suite is now 162 tests; real-host acceptance remains outstanding.
+
 ## 2026-09-30 — Release and concurrency hardening
 
 - Made tests runnable from a clean source checkout without relying on an editable install, added Python 3.11-3.13 CI for tests/compile/wheel build, and added a wheel-content/entry-point verifier.

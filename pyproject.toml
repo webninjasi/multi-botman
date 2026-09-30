@@ -19,6 +19,7 @@ dependencies = [
 botman = "botman.bot:main"
 botman-log-agent = "botman_agent.main:main"
 botman-log-export = "botman_agent.export:main"
+botman-target-preflight = "botman_agent.preflight:main"
 
 [project.optional-dependencies]
 agent = [

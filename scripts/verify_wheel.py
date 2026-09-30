@@ -15,11 +15,13 @@ REQUIRED_MODULES = {
     "botman/commands/admin.py",
     "botman_agent/main.py",
     "botman_agent/export.py",
+    "botman_agent/preflight.py",
 }
 REQUIRED_SCRIPTS = {
     "botman": "botman.bot:main",
     "botman-log-agent": "botman_agent.main:main",
     "botman-log-export": "botman_agent.export:main",
+    "botman-target-preflight": "botman_agent.preflight:main",
 }
 
 

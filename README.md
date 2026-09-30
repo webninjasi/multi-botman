@@ -23,12 +23,13 @@ Implemented and covered by the current automated suite:
 - `botman-log-export` plus `/logs tail|download` for retained journald history in human or JSONL gzip parts
 - central and agent systemd unit files with restrictive default umasks
 - clean-checkout CI for Python 3.11-3.13 plus wheel-content/entry-point verification
+- target-host preflight CLI for Compose, journald policy/permissions, cysystemd, systemd unit/sudoers, and optional app export checks
 
-The automated suite currently passes **155 tests**.
+The automated suite currently passes **162 tests**.
 
 Still required before calling v1 production-complete:
 
-- automated target log-agent provisioning (manual provisioning is documented and usable now)
+- real-host verification of the documented one-time target log-agent provisioning; automation can be decided after that evidence exists
 - real Linux/cysystemd+journald acceptance
 - real Docker and Podman integration/failure drills on VPSes
 - end-to-end Discord test-guild acceptance
@@ -69,6 +70,7 @@ Executables:
 botman
 botman-log-agent
 botman-log-export --help
+botman-target-preflight --help
 ```
 
 ## Documentation read order
