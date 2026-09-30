@@ -12,6 +12,7 @@ EnvironmentFile=/etc/botman/env
 ExecStart=/opt/botman/.venv/bin/botman
 Restart=on-failure
 RestartSec=5s
+UMask=0077
 PrivateTmp=true
 ProtectSystem=strict
 ReadWritePaths=/etc/botman /var/lib/botman -/srv/botman -/var/lib/botman-log-agent

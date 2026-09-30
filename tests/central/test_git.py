@@ -186,3 +186,81 @@ def test_git_cache_and_key_paths_are_stack_namespaced(tmp_path: Path) -> None:
     assert repos.repo_path(one) != repos.repo_path(two)
     assert keys.default_private_path("one", "app") == tmp_path / "keys" / "one" / "app"
     assert keys.default_private_path("two", "app") == tmp_path / "keys" / "two" / "app"
+
+class FailingKeyRunner:
+    async def run(self, argv, *, env, timeout=None, check=False):
+        args = tuple(str(x) for x in argv)
+        key_path = Path(args[args.index("-f") + 1])
+        key_path.write_text("PARTIAL", encoding="utf-8")
+        Path(f"{key_path}.pub").write_text("PARTIAL-PUB", encoding="utf-8")
+        return ExecResult(args, 1, "", "keygen failed")
+
+
+@pytest.mark.asyncio
+async def test_deploy_key_rotation_failure_preserves_existing_pair(tmp_path: Path) -> None:
+    from botman.git import DeployKeyManager
+
+    cfg = config(tmp_path)
+    manager = DeployKeyManager(cfg, runner=FailingKeyRunner())
+    private = manager.default_private_path("bots", "app-a")
+    public = Path(f"{private}.pub")
+    private.parent.mkdir(parents=True, exist_ok=True)
+    private.write_text("OLD-PRIVATE", encoding="utf-8")
+    public.write_text("OLD-PUBLIC", encoding="utf-8")
+
+    with pytest.raises(GitError, match="keygen failed"):
+        await manager.generate("bots", "app-a", replace=True)
+
+    assert private.read_text(encoding="utf-8") == "OLD-PRIVATE"
+    assert public.read_text(encoding="utf-8") == "OLD-PUBLIC"
+    assert not list(private.parent.glob(f".{private.name}.botman-*.tmp*"))
+    assert not list(private.parent.glob(f".{private.name}.botman-*.bak*"))
+
+
+@pytest.mark.asyncio
+async def test_deploy_key_rotation_replaces_pair_only_after_staging(tmp_path: Path) -> None:
+    from botman.git import DeployKeyManager
+
+    cfg = config(tmp_path)
+    manager = DeployKeyManager(cfg, runner=KeyCreatingRunner())
+    private = manager.default_private_path("bots", "app-a")
+    public = Path(f"{private}.pub")
+    private.parent.mkdir(parents=True, exist_ok=True)
+    private.write_text("OLD-PRIVATE", encoding="utf-8")
+    public.write_text("OLD-PUBLIC", encoding="utf-8")
+
+    returned_private, returned_public = await manager.generate("bots", "app-a", replace=True)
+
+    assert returned_private == private
+    assert returned_public == "ssh-ed25519 AAAATEST botman"
+    assert private.read_text(encoding="utf-8") == "PRIVATE"
+    assert public.read_text(encoding="utf-8").startswith("ssh-ed25519 AAAATEST")
+
+@pytest.mark.asyncio
+async def test_git_admin_setup_waits_for_shared_stack_lock(tmp_path: Path) -> None:
+    import asyncio
+
+    from botman.compose import StackLockRegistry
+    from botman.config import ConfigStore
+    from botman.git import GitAdminService
+
+    cfg = config(tmp_path)
+    cfg.stacks["bots"].apps["app-a"].git.deploy_key_path = None
+    store = ConfigStore(tmp_path / "config.yaml")
+    await store.save(cfg)
+    locks = StackLockRegistry()
+    service = GitAdminService(store, runner=KeyCreatingRunner(), locks=locks)
+
+    lock = await locks.get("bots")
+    await lock.acquire()
+    task = asyncio.create_task(service.setup("app-a", channel_id=1))
+    await asyncio.sleep(0)
+    assert not task.done()
+    assert store.load().stacks["bots"].apps["app-a"].git.deploy_key_path is None
+
+    lock.release()
+    await task
+    assert (
+        store.load().stacks["bots"].apps["app-a"].git.deploy_key_path
+        == tmp_path / "keys" / "bots" / "app-a"
+    )

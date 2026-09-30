@@ -14,17 +14,26 @@ from ..compose import (
 from ..config import ConfigStore
 from ..env import ENV_UPLOAD_MAX_BYTES, EnvMissingError, EnvService
 from ..git import GitAdminService
+from ..live_logs import ServerAgentLockRegistry
 
 
-def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, locks: StackLockRegistry):
+def register_admin_commands(
+    bot,
+    store: ConfigStore,
+    *,
+    admin_ids: str | None,
+    locks: StackLockRegistry,
+    agent_locks: ServerAgentLockRegistry | None = None,
+):
     """Register `/config ...` and `/env ...` application-command groups."""
 
     import discord  # type: ignore[import-not-found]
     from discord import app_commands  # type: ignore[import-not-found]
 
     guard = AdminGuard(parse_admin_ids(admin_ids))
-    config_service = AdminConfigService(store)
-    git_service = GitAdminService(store)
+    config_service = AdminConfigService(store, locks=locks)
+    git_service = GitAdminService(store, locks=locks)
+    agent_locks = agent_locks or ServerAgentLockRegistry()
 
     async def authorize(interaction) -> bool:
         try:
@@ -214,7 +223,7 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
                 log_identifier=log_identifier,
             )
             await interaction.followup.send(
-                f"App `{name}` added. Run `/config git setup` before `/update`.",
+                f"App `{name}` added. Run `/config git setup {name}` before `/update {name}`.",
                 ephemeral=True,
             )
         except Exception as exc:
@@ -266,7 +275,7 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
             payload = await file.read()
             config = store.load()
             stack, _ = config.stack_for_channel(interaction.channel_id)
-            result = await ComposeAdminService(config, locks=locks).upload(stack, payload)
+            result = await ComposeAdminService(store, locks=locks).upload(stack, payload)
             normalized = result.stdout.strip()
             message = f"Compose configuration for `{stack}` validated and installed."
             if normalized:
@@ -284,7 +293,7 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
                 raise ValueError("Compose show must be run in a configured stack channel")
             config = store.load()
             stack, _ = config.stack_for_channel(interaction.channel_id)
-            content = await ComposeAdminService(config, locks=locks).show(stack)
+            content = await ComposeAdminService(store, locks=locks).show(stack)
             if len(content) <= 1600 and "```" not in content:
                 await interaction.followup.send(
                     f"```yaml\n{content}\n```", ephemeral=True
@@ -337,7 +346,8 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
         if not await begin(interaction):
             return
         try:
-            await AgentControlService(store.load()).sync(server)
+            async with agent_locks.get(server):
+                await AgentControlService(store.load()).sync(server)
             await interaction.followup.send(
                 f"Log agent config synchronized and service active on `{server}`.",
                 ephemeral=True,
@@ -379,7 +389,7 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
         try:
             if interaction.channel_id is None:
                 raise ValueError("env commands must be run in a configured stack channel")
-            env_file = await EnvService(store.load()).show(app, interaction.channel_id)
+            env_file = await EnvService(store, locks=locks).show(app, interaction.channel_id)
             attachment = discord.File(
                 io.BytesIO(env_file.content.encode()), filename=f"{app}.env"
             )
@@ -408,7 +418,7 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
                 )
             if interaction.channel_id is None:
                 raise ValueError("env commands must be run in a configured stack channel")
-            path = await EnvService(store.load()).upload(app, interaction.channel_id, await file.read())
+            path = await EnvService(store, locks=locks).upload(app, interaction.channel_id, await file.read())
             await interaction.followup.send(
                 f"Environment for `{app}` written to `{path}`. No restart/deploy was performed.",
                 ephemeral=True,
@@ -428,7 +438,7 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
         try:
             if interaction.channel_id is None:
                 raise ValueError("env commands must be run in a configured stack channel")
-            await EnvService(store.load()).set(app, interaction.channel_id, key, value)
+            await EnvService(store, locks=locks).set(app, interaction.channel_id, key, value)
             await interaction.followup.send(
                 f"`{key}` updated for `{app}`. No restart/deploy was performed.",
                 ephemeral=True,
@@ -443,7 +453,7 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
         try:
             if interaction.channel_id is None:
                 raise ValueError("env commands must be run in a configured stack channel")
-            await EnvService(store.load()).unset(app, interaction.channel_id, key)
+            await EnvService(store, locks=locks).unset(app, interaction.channel_id, key)
             await interaction.followup.send(
                 f"`{key}` removed from `{app}`. No restart/deploy was performed.",
                 ephemeral=True,

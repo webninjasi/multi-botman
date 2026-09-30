@@ -41,13 +41,15 @@ Updated 2026-09-30 for the fresh Botman implementation.
 - `systemd/botman.service`
 - `systemd/botman-log-agent.service`
 - `config.example.yaml`
+- `.github/workflows/ci.yml` — clean-checkout Python 3.11-3.13 test/compile/wheel verification
+- `scripts/verify_wheel.py` — required-module and console-entry-point wheel check
 
 ## Tests
 
 - `tests/central/`
 - `tests/agent/`
 
-Current fresh result: **127 passed**.
+Current fresh result: **155 passed**.
 
 ## Operator/design documentation
 

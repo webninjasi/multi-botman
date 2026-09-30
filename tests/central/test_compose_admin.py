@@ -56,10 +56,7 @@ class MemoryExecutor:
         self.calls.append(args)
         if args[-1] == "config":
             return ExecResult(args, self.config_returncode, "normalized", "bad compose" if self.config_returncode else "")
-        if args[:2] == ("mv", "--"):
-            src, dst = args[-2:]
-            self.files[dst] = self.files.pop(src)
-        elif args[:3] == ("rm", "-f", "--"):
+        if args[:3] == ("rm", "-f", "--"):
             self.files.pop(args[-1], None)
         result = ExecResult(args, 0, "", "")
         return result.check() if check else result
@@ -87,7 +84,7 @@ async def test_compose_upload_runtime_validates_stage_then_atomically_activates(
     assert config_calls[0][:2] == ("docker", "compose")
     assert config_calls[0][2:6] == ("-p", "botman-bots", "-f", config_calls[0][5])
     assert config_calls[0][5].startswith("/srv/botman/stacks/bots/.compose.yml.botman-")
-    assert any(call[:2] == ("mv", "--") for call in executor.calls)
+    assert not any(call[0] == "mv" for call in executor.calls)
 
 
 @pytest.mark.asyncio
@@ -114,7 +111,7 @@ async def test_runtime_validation_failure_never_replaces_active_compose() -> Non
         await service.upload("bots", VALID)
 
     assert executor.files[target] == b"old"
-    assert not any(call[:2] == ("mv", "--") for call in executor.calls)
+    assert not any(call[0] == "mv" for call in executor.calls)
     assert not any(".botman-" in path for path in executor.files)
 
 
@@ -126,3 +123,62 @@ async def test_compose_show_reads_utf8_content() -> None:
     executor.files[target] = VALID
     service = ComposeAdminService(cfg, executor_factory=lambda _: executor)
     assert await service.show("bots") == VALID.decode()
+
+
+class FinalWriteFailExecutor(MemoryExecutor):
+    async def write_bytes(self, path, data, *, mode=0o600, atomic=True):
+        path_text = str(path)
+        if path_text.endswith("/compose.yml") and atomic:
+            raise OSError("activation write failed")
+        await super().write_bytes(path, data, mode=mode, atomic=atomic)
+
+
+@pytest.mark.asyncio
+async def test_final_compose_activation_failure_preserves_existing_file() -> None:
+    cfg = config()
+    executor = FinalWriteFailExecutor()
+    target = "/srv/botman/stacks/bots/compose.yml"
+    executor.files[target] = b"old"
+    service = ComposeAdminService(cfg, executor_factory=lambda _: executor)
+
+    with pytest.raises(OSError, match="activation write failed"):
+        await service.upload("bots", VALID)
+
+    assert executor.files[target] == b"old"
+    assert not any(".botman-" in path for path in executor.files)
+
+@pytest.mark.asyncio
+async def test_store_backed_compose_upload_revalidates_after_waiting_for_stack_lock(
+    tmp_path,
+) -> None:
+    import asyncio
+
+    from botman.compose import StackLockRegistry
+    from botman.config import ConfigStore
+
+    cfg = config()
+    store = ConfigStore(tmp_path / "config.yaml")
+    await store.save(cfg)
+    locks = StackLockRegistry()
+    executor = MemoryExecutor()
+    service = ComposeAdminService(
+        store,
+        executor_factory=lambda _: executor,
+        locks=locks,
+    )
+
+    lock = await locks.get("bots")
+    await lock.acquire()
+    task = asyncio.create_task(service.upload("bots", VALID))
+    await asyncio.sleep(0)
+
+    def edit(config):
+        config.stacks["bots"].apps["app-a"].service = "svc-new"
+
+    await store.mutate(edit)
+    lock.release()
+
+    with pytest.raises(ComposeValidationError, match="svc-new"):
+        await task
+    assert executor.files == {}
+    assert executor.calls == []

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import shlex
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Literal
 
-from .compose import executor_for_server
+from .compose import StackLockRegistry, executor_for_server
 from .config import ConfigStore
 from .executor import ExecResult
 from .models import AppConfig, GitConfig, LocalServerConfig, SSHServerConfig, StackConfig
@@ -36,8 +37,17 @@ def parse_compose_argv(value: str) -> tuple[str, ...]:
 
 
 class AdminConfigService:
-    def __init__(self, store: ConfigStore):
+    def __init__(self, store: ConfigStore, *, locks: StackLockRegistry | None = None):
         self.store = store
+        self.locks = locks or StackLockRegistry()
+
+    async def _stack_lock_for_channel(self, channel_id: str | int):
+        config = self.store.load_or_default()
+        try:
+            stack_name, _ = config.stack_for_channel(channel_id)
+        except KeyError as exc:
+            raise ValueError("this channel is not configured for a stack") from exc
+        return stack_name, await self.locks.get(stack_name)
 
     async def add_server(
         self,
@@ -184,7 +194,16 @@ class AdminConfigService:
                 compose_argv=target_compose,
             )
 
-        await self.store.mutate(mutate)
+        snapshot = self.store.load_or_default()
+        stack_names = sorted(
+            stack_name
+            for stack_name, stack in snapshot.stacks.items()
+            if stack.server == name
+        )
+        async with AsyncExitStack() as held:
+            for stack_name in stack_names:
+                await held.enter_async_context(await self.locks.get(stack_name))
+            await self.store.mutate(mutate)
 
     async def test_server(self, name: str) -> ExecResult:
         config = self.store.load()
@@ -262,7 +281,9 @@ class AdminConfigService:
             if compose_file is not None:
                 stack.compose_file = compose_file
 
-        await self.store.mutate(mutate)
+        _, lock = await self._stack_lock_for_channel(channel_id)
+        async with lock:
+            await self.store.mutate(mutate)
 
     async def add_app(
         self,
@@ -288,7 +309,9 @@ class AdminConfigService:
                 git=GitConfig(repo_url=repo_url, branch=branch),
             )
 
-        await self.store.mutate(mutate)
+        _, lock = await self._stack_lock_for_channel(channel_id)
+        async with lock:
+            await self.store.mutate(mutate)
 
     async def edit_app(
         self,
@@ -327,4 +350,6 @@ class AdminConfigService:
             if branch is not None:
                 app.git.branch = branch
 
-        await self.store.mutate(mutate)
+        _, lock = await self._stack_lock_for_channel(channel_id)
+        async with lock:
+            await self.store.mutate(mutate)

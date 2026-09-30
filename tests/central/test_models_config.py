@@ -225,3 +225,36 @@ def test_git_repo_url_must_use_ssh() -> None:
     raw["stacks"]["bots"]["apps"]["app-a"]["git"]["repo_url"] = "https://github.com/owner/app-a.git"
     with pytest.raises(ValueError, match="must use SSH"):
         BotmanConfig.model_validate(raw)
+
+
+def test_duplicate_compose_project_on_same_server_is_rejected() -> None:
+    raw = valid_config_dict()
+    raw["stacks"]["other"] = {
+        "server": "remote-1",
+        "channel_id": "222",
+        "project_name": "botman-bots",
+    }
+    with pytest.raises(ValueError, match="project_name.*assigned to both"):
+        BotmanConfig.model_validate(raw)
+
+
+def test_same_compose_project_name_on_different_servers_is_allowed() -> None:
+    raw = valid_config_dict()
+    raw["stacks"]["other"] = {
+        "server": "local",
+        "channel_id": "222",
+        "project_name": "botman-bots",
+    }
+    config = BotmanConfig.model_validate(raw)
+    assert config.stacks["bots"].project_name == config.stacks["other"].project_name
+
+
+def test_duplicate_compose_service_within_stack_is_rejected() -> None:
+    raw = valid_config_dict()
+    raw["stacks"]["bots"]["apps"]["app-b"] = {
+        "service": "app-a",
+        "log_identifier": "botman-bots-app-b",
+        "git": {"repo_url": "git@example.com:owner/app-b.git"},
+    }
+    with pytest.raises(ValueError, match="Compose service.*assigned to both"):
+        BotmanConfig.model_validate(raw)

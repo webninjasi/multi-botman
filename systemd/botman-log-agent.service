@@ -12,6 +12,7 @@ Environment=BOTMAN_AGENT_CONFIG=/var/lib/botman-log-agent/config.yaml
 ExecStart=/opt/botman-agent/.venv/bin/botman-log-agent
 Restart=always
 RestartSec=5s
+UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

@@ -80,8 +80,9 @@ At load and before save:
 - channel IDs are numeric strings
 - stack references existing server
 - apps are nested under their owning stack; app names only need to be unique within that stack
-- channel ID should normally be unique per stack
-- project name stable/safe
+- each configured stack has a globally unique command-channel ID
+- Compose project name is stable/safe and unique among stacks on the same server
+- each managed Compose service is unique within a stack
 - timezone resolvable by `zoneinfo`
 - numeric settings > 0 and bounded sensibly
 - no unknown keys silently accepted
@@ -171,8 +172,8 @@ Suggested group structure:
 
 /config app add
 /config app edit
-/config git setup
-/config git rotate-key
+/config git setup APP
+/config git rotate-key APP
 
 /config agent sync
 /config agent status
@@ -214,11 +215,11 @@ Run `/config app add` in the stack's command channel. The stack is derived from 
 - repo URL
 - branch
 
-The same rule applies to `/config compose upload|show`, `/config git setup|rotate-key`, and `/env ...`: these stack/app-scoped admin commands derive the stack from the current channel.
+The same rule applies to `/config compose upload|show`, `/config git setup APP` and `/config git rotate-key APP`, and `/env ...`: these stack/app-scoped admin commands derive the stack from the current channel.
 
 Create/get the app-specific Discord log webhook in the stack command channel. Generate the central repo deploy key during explicit Git setup (or app creation if UX is cleaner) and show only the **public** key ephemerally.
 
-No application deployment happens automatically.
+No application deployment happens automatically. Stack-scoped admin mutations that can affect runtime behavior share the same per-stack lock as lifecycle/deployment operations. Store-backed lifecycle, deployment, and Compose upload commands reload/re-authorize configuration after they obtain that lock so queued work cannot run with a pre-edit snapshot.
 
 ## Environment commands
 
@@ -242,6 +243,7 @@ Rules:
 - write mode `0600`
 - upload size sanity limit
 - env changes never auto-restart/deploy
+- env upload/set/unset serialize against lifecycle/deployment work for that stack; set/unset hold the lock across read-modify-write
 - user explicitly runs `/restart` or `/update` when ready
 
 ## Config/Compose changes

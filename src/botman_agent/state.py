@@ -8,7 +8,11 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+
+class CorruptStateError(RuntimeError):
+    """A checkpoint exists but cannot be parsed or validated."""
 
 
 class AppState(BaseModel):
@@ -54,8 +58,18 @@ class StateStore:
         path = self.path_for(app_name)
         if not path.exists():
             return None
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        return AppState.model_validate(raw)
+        # Filesystem errors remain operational failures. Only malformed content
+        # is classified as a corrupt checkpoint that can safely be discarded.
+        text = path.read_text(encoding="utf-8")
+        try:
+            raw = json.loads(text)
+            return AppState.model_validate(raw)
+        except (json.JSONDecodeError, ValidationError, TypeError) as exc:
+            raise CorruptStateError(f"invalid checkpoint {path}: {exc}") from exc
+
+    def delete(self, app_name: str) -> None:
+        path = self.path_for(app_name)
+        path.unlink(missing_ok=True)
 
     def save(self, app_name: str, state: AppState) -> None:
         path = self.path_for(app_name)

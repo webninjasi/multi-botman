@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import tarfile
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -286,3 +287,133 @@ async def test_update_and_lifecycle_share_stack_lock_when_registry_is_shared() -
     assert service.locks is locks
     assert compose.locks is locks
     assert await locks.get("bots") is await locks.get(resolve_app(cfg, "bots", "app-a").stack_name)
+
+class UnsafeArchiveGit(FakeGit):
+    def __init__(self, kind: str) -> None:
+        super().__init__(SHA2)
+        self.kind = kind
+
+    async def archive(self, app_name: str, sha: str, destination: Path):
+        self.archive_calls += 1
+        with tarfile.open(destination, "w") as archive:
+            if self.kind == "escaping-symlink":
+                info = tarfile.TarInfo("link")
+                info.type = tarfile.SYMTYPE
+                info.linkname = "../../etc"
+                archive.addfile(info)
+            elif self.kind == "absolute-symlink":
+                info = tarfile.TarInfo("link")
+                info.type = tarfile.SYMTYPE
+                info.linkname = "/etc"
+                archive.addfile(info)
+            elif self.kind == "hardlink":
+                data = b"safe\n"
+                base = tarfile.TarInfo("base.txt")
+                base.size = len(data)
+                archive.addfile(base, io.BytesIO(data))
+                info = tarfile.TarInfo("copy.txt")
+                info.type = tarfile.LNKTYPE
+                info.linkname = "base.txt"
+                archive.addfile(info)
+            else:
+                raise AssertionError(self.kind)
+
+
+@pytest.mark.parametrize("kind", ["escaping-symlink", "absolute-symlink", "hardlink"])
+@pytest.mark.asyncio
+async def test_unsafe_archive_links_are_rejected_before_upload(kind: str) -> None:
+    cfg = config()
+    git = UnsafeArchiveGit(kind)
+    target = FakeTargetExecutor(current=f"releases/{SHA1}")
+    service = DeploymentService(cfg, git=git, executor_factory=lambda _: target)
+
+    with pytest.raises(DeploymentError, match="Git archive failed"):
+        await service.update(app_name="app-a", channel_id=111)
+
+    assert target.current == f"releases/{SHA1}"
+    assert not any(call[0] == "sha256sum" for call in target.calls)
+    assert not any(call[:2] == ("docker", "compose") for call in target.calls)
+
+
+def test_internal_relative_symlink_is_allowed() -> None:
+    with tempfile.NamedTemporaryFile(suffix=".tar") as handle:
+        with tarfile.open(handle.name, "w") as archive:
+            data = b"safe\n"
+            target = tarfile.TarInfo("shared/file.txt")
+            target.size = len(data)
+            archive.addfile(target, io.BytesIO(data))
+            link = tarfile.TarInfo("app/link")
+            link.type = tarfile.SYMTYPE
+            link.linkname = "../shared/file.txt"
+            archive.addfile(link)
+        DeploymentService._validate_archive_paths(Path(handle.name))
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        f"/srv/botman/stacks/bots/apps/app-a/releases/{SHA1}",
+        f"../releases/{SHA1}",
+        f"other/{SHA1}",
+        SHA1,
+        "releases/not-a-sha",
+    ],
+)
+@pytest.mark.asyncio
+async def test_unrecognized_current_symlink_target_aborts_before_archive(target: str) -> None:
+    cfg = config()
+    git = FakeGit(SHA2)
+    executor = FakeTargetExecutor(current=target)
+    service = DeploymentService(cfg, git=git, executor_factory=lambda _: executor)
+
+    with pytest.raises(DeploymentError, match="current symlink"):
+        await service.update(app_name="app-a", channel_id=111)
+
+    assert git.fetch_calls == 1
+    assert git.archive_calls == 0
+    assert not any(call[:2] == ("docker", "compose") for call in executor.calls)
+
+@pytest.mark.asyncio
+async def test_store_backed_update_reloads_branch_after_waiting_for_stack_lock(
+    tmp_path,
+) -> None:
+    import asyncio
+
+    from botman.config import ConfigStore
+
+    class BranchRecordingGit(FakeGit):
+        def __init__(self):
+            super().__init__(SHA1)
+            self.branches = []
+
+        async def fetch(self, resolved):
+            self.branches.append(resolved.app.git.branch)
+            return await super().fetch(resolved)
+
+    cfg = config()
+    store = ConfigStore(tmp_path / "config.yaml")
+    await store.save(cfg)
+    locks = StackLockRegistry()
+    git = BranchRecordingGit()
+    target = FakeTargetExecutor(current=f"releases/{SHA1}")
+    service = DeploymentService(
+        store,
+        git=git,
+        executor_factory=lambda _: target,
+        locks=locks,
+    )
+
+    lock = await locks.get("bots")
+    await lock.acquire()
+    task = asyncio.create_task(service.update(app_name="app-a", channel_id=111))
+    await asyncio.sleep(0)
+
+    def edit(config):
+        config.stacks["bots"].apps["app-a"].git.branch = "stable"
+
+    await store.mutate(edit)
+    lock.release()
+    result = await task
+
+    assert result.status == "noop"
+    assert git.branches == ["stable"]

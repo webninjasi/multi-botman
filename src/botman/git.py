@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import os
 import shlex
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Sequence
 
+from .compose import StackLockRegistry
 from .executor import CommandError, CommandTimeout, ExecResult
 from .models import AppConfig, BotmanConfig
 from .routing import ResolvedApp, authorize_app_channel
@@ -195,46 +197,103 @@ class DeployKeyManager:
         private.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         if (private.exists() or public.exists()) and not replace:
             raise GitError(f"deploy key already exists for {stack_name}/{app_name}")
-        if replace:
-            private.unlink(missing_ok=True)
-            public.unlink(missing_ok=True)
+
+        token = uuid.uuid4().hex
+        staged_private = private.with_name(f".{private.name}.botman-{token}.tmp")
+        staged_public = Path(f"{staged_private}.pub")
+        backup_private = private.with_name(f".{private.name}.botman-{token}.bak")
+        backup_public = Path(f"{backup_private}.pub")
         env = {
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
             "HOME": os.environ.get("HOME", "/var/lib/botman"),
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
         }
-        result = await self.runner.run(
-            (
-                "ssh-keygen", "-q", "-t", "ed25519", "-N", "",
-                "-C", f"botman deploy {stack_name}/{app_name}",
-                "-f", str(private),
-            ),
-            env=env, timeout=30, check=False,
-        )
-        if not result.ok:
-            raise GitError(result.stderr.strip() or "ssh-keygen failed")
-        os.chmod(private, 0o600)
-        os.chmod(public, 0o644)
         try:
-            public_text = public.read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            raise GitError(f"generated public key could not be read: {exc}") from exc
-        return private, public_text
+            result = await self.runner.run(
+                (
+                    "ssh-keygen",
+                    "-q",
+                    "-t",
+                    "ed25519",
+                    "-N",
+                    "",
+                    "-C",
+                    f"botman deploy {stack_name}/{app_name}",
+                    "-f",
+                    str(staged_private),
+                ),
+                env=env,
+                timeout=30,
+                check=False,
+            )
+            if not result.ok:
+                raise GitError(result.stderr.strip() or "ssh-keygen failed")
+            os.chmod(staged_private, 0o600)
+            os.chmod(staged_public, 0o644)
+            try:
+                public_text = staged_public.read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                raise GitError(f"generated public key could not be read: {exc}") from exc
+            if not public_text:
+                raise GitError("generated public key is empty")
+
+            old_private = private.exists()
+            old_public = public.exists()
+            try:
+                if old_private:
+                    os.replace(private, backup_private)
+                if old_public:
+                    os.replace(public, backup_public)
+                os.replace(staged_private, private)
+                os.replace(staged_public, public)
+                os.chmod(private, 0o600)
+                os.chmod(public, 0o644)
+            except Exception as exc:
+                # Restore the prior pair if activation of the staged pair fails.
+                private.unlink(missing_ok=True)
+                public.unlink(missing_ok=True)
+                if backup_private.exists():
+                    os.replace(backup_private, private)
+                if backup_public.exists():
+                    os.replace(backup_public, public)
+                raise GitError(f"failed to activate generated deploy key: {exc}") from exc
+            else:
+                backup_private.unlink(missing_ok=True)
+                backup_public.unlink(missing_ok=True)
+            return private, public_text
+        finally:
+            staged_private.unlink(missing_ok=True)
+            staged_public.unlink(missing_ok=True)
+            # Backups are removed on successful activation. If a filesystem
+            # error prevents restoration, leave any backup in place for manual
+            # recovery rather than deleting the last known-good private key.
 
 
 class GitAdminService:
     """Config-aware deploy key setup/rotation scoped by Discord stack channel."""
 
-    def __init__(self, store, *, runner: GitRunner | None = None):
+    def __init__(
+        self,
+        store,
+        *,
+        runner: GitRunner | None = None,
+        locks: StackLockRegistry | None = None,
+    ):
         self.store = store
         self.runner = runner
+        self.locks = locks or StackLockRegistry()
 
     async def setup(
         self, app_name: str, *, channel_id: str | int, replace: bool = False
     ) -> str:
+        initial = authorize_app_channel(self.store.load_or_default(), app_name, channel_id)
+        lock = await self.locks.get(initial.stack_name)
+
         async def mutate(config: BotmanConfig) -> str:
             resolved = authorize_app_channel(config, app_name, channel_id)
+            if resolved.stack_name != initial.stack_name:
+                raise RuntimeError("app stack changed while configuring Git; retry the command")
             manager = DeployKeyManager(config, runner=self.runner)
             private, public = await manager.generate(
                 resolved.stack_name, resolved.name, replace=replace
@@ -242,5 +301,6 @@ class GitAdminService:
             resolved.app.git.deploy_key_path = private
             return public
 
-        _, public = await self.store.mutate(mutate)
+        async with lock:
+            _, public = await self.store.mutate(mutate)
         return public

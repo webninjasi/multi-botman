@@ -4,9 +4,9 @@ This is the operator runbook for installing Botman and getting an application to
 
 ## What is runnable now
 
-As of 2026-09-30, the central Discord bot, lifecycle commands, admin onboarding commands, Compose upload/validation, Git deploy-key setup, env management, `/update`, `/livelogs start|stop`, and `/logs tail|download` are implemented and unit-tested. The target `botman-log-agent`, `botman-log-export`, and systemd unit are included. Target OS/package provisioning remains a one-time manual step documented below.
+As of 2026-09-30, the central Discord bot, lifecycle commands, admin onboarding commands, Compose upload/validation, Git deploy-key setup, env management, `/update`, `/livelogs start|stop`, and `/logs tail|download` are implemented and unit-tested. The target `botman-log-agent`, `botman-log-export`, and systemd unit are included. Target OS/package provisioning remains a one-time manual step documented below. Stack-scoped config/Git/env mutations serialize with lifecycle/deployment operations; queued runtime work reloads config after taking that lock, and agent sync serializes with live-log state changes.
 
-Current automated result: **118 tests passed**. Real VPS Docker/Podman/cysystemd and Discord test-guild acceptance are still required before calling v1 production-complete.
+Current automated result: **155 tests passed**. Real VPS Docker/Podman/cysystemd and Discord test-guild acceptance are still required before calling v1 production-complete.
 
 Do not deploy anything under `reference/`.
 
@@ -308,7 +308,7 @@ In the desired control channel:
 /config stack add
 ```
 
-Provide the stack name and server. `project_name` is optional; Botman derives a stable name if omitted.
+Provide the stack name and server. `project_name` is optional; Botman derives a stable name if omitted. Compose project names must be unique among stacks that share a VPS.
 
 ### Add the app **before uploading Compose**
 
@@ -319,7 +319,7 @@ Provide the stack name and server. `project_name` is optional; Botman derives a 
 Provide:
 
 - app name (unique only within this stack)
-- exact Compose service name
+- exact Compose service name (one managed app per Compose service inside a stack)
 - SSH Git URL (`git@host:owner/repo.git` or `ssh://...`)
 - branch
 - optional explicit journald `log_identifier`
@@ -361,7 +361,7 @@ If you previously uploaded Compose before adding all managed apps, upload it aga
 ### Generate the app Git deploy key
 
 ```text
-/config git setup
+/config git setup APP
 ```
 
 Run this in the stack command channel. Botman resolves the app inside that stack and returns the public Ed25519 key ephemerally. Add **that public key only** to the repository as a read-only deploy key. The private key is namespaced as `/var/lib/botman/keys/<stack>/<app>` on central.
@@ -369,7 +369,7 @@ Run this in the stack command channel. Botman resolves the app inside that stack
 Key rotation later:
 
 ```text
-/config git rotate-key
+/config git rotate-key APP
 ```
 
 Replace the repository's old public deploy key before the next update.
@@ -385,7 +385,7 @@ Use any combination:
 /env show APP
 ```
 
-Run `/env ...` in the stack command channel; the app name is resolved only inside that stack. Env writes are atomic and mode `0600`. They never trigger a restart/deploy.
+Run `/env ...` in the stack command channel; the app name is resolved only inside that stack. Env writes are atomic and mode `0600`. They never trigger a restart/deploy, and mutations serialize against lifecycle/deployment work for that stack.
 
 ### First deployment
 
@@ -633,7 +633,7 @@ For a deployable app, all of these should be true:
 4. `/config stack add` was run in the intended command channel.
 5. `/config app add` was run in that stack channel before final Compose validation.
 6. `/config compose upload` succeeds against the target runtime.
-7. `/config git setup` public key is installed read-only in the repository.
+7. `/config git setup APP` public key is installed read-only in the repository.
 8. Git-provider host key exists in `/etc/botman/git_known_hosts` on central.
 9. Required env values are present.
 10. `/update APP` succeeds.

@@ -14,6 +14,7 @@ from pathlib import Path, PurePosixPath
 from typing import Callable, Literal
 
 from .compose import ComposeManager, StackLockRegistry, executor_for_resolved_app
+from .config import ConfigStore
 from .executor import ExecResult, Executor
 from .git import GitError, GitRepositoryManager
 from .models import BotmanConfig
@@ -63,17 +64,23 @@ ExecutorFactory = Callable[[ResolvedApp], Executor]
 class DeploymentService:
     def __init__(
         self,
-        config: BotmanConfig,
+        config: BotmanConfig | ConfigStore,
         *,
         git: GitRepositoryManager | None = None,
         executor_factory: ExecutorFactory = executor_for_resolved_app,
         locks: StackLockRegistry | None = None,
     ):
-        self.config = config
-        self.git = git or GitRepositoryManager(config)
+        self.config_source = config
+        initial = self._config()
+        self._default_git = git is None
+        self.git = git or GitRepositoryManager(initial)
         self.executor_factory = executor_factory
         self.locks = locks or StackLockRegistry()
-        self.compose = ComposeManager(config, executor_factory=executor_factory, locks=self.locks)
+
+    def _config(self) -> BotmanConfig:
+        if isinstance(self.config_source, ConfigStore):
+            return self.config_source.load_or_default()
+        return self.config_source
 
     async def update(
         self,
@@ -82,8 +89,8 @@ class DeploymentService:
         channel_id: str | int,
         progress: Callable[[str], object] | None = None,
     ) -> DeploymentResult:
-        resolved = authorize_app_channel(self.config, app_name, channel_id)
-        lock = await self.locks.get(resolved.stack_name)
+        initial = authorize_app_channel(self._config(), app_name, channel_id)
+        lock = await self.locks.get(initial.stack_name)
         transcript = DeploymentTranscript()
 
         async def note(message: str) -> None:
@@ -94,6 +101,18 @@ class DeploymentService:
                     await maybe  # type: ignore[misc]
 
         async with lock:
+            config = self._config()
+            resolved = authorize_app_channel(config, app_name, channel_id)
+            if resolved.stack_name != initial.stack_name:
+                raise RuntimeError("app stack changed while waiting for deployment lock; retry")
+            git = (
+                GitRepositoryManager(config, runner=self.git.runner)
+                if self._default_git
+                else self.git
+            )
+            compose = ComposeManager(
+                config, executor_factory=self.executor_factory, locks=self.locks
+            )
             executor = self.executor_factory(resolved)
             archive_path: Path | None = None
             remote_archive: PurePosixPath | None = None
@@ -101,14 +120,20 @@ class DeploymentService:
             try:
                 await note(f"fetching {app_name}:{resolved.app.git.branch}")
                 try:
-                    revision = await self.git.fetch(resolved)
+                    revision = await git.fetch(resolved)
                 except GitError as exc:
                     raise DeploymentError(f"Git fetch failed: {exc}", transcript) from exc
                 sha = revision.sha
                 await note(f"resolved commit {sha}")
 
-                previous_target = await self._current_target(executor, resolved)
+                previous_target = await self._current_target(executor, resolved, config)
                 previous_sha = self._sha_from_target(previous_target)
+                if previous_target is not None and previous_sha is None:
+                    raise DeploymentError(
+                        "active current symlink has an unsafe or unrecognized target; "
+                        "expected releases/<git-sha>",
+                        transcript,
+                    )
                 if previous_sha == sha:
                     await note("target already runs this commit; no changes")
                     return DeploymentResult(
@@ -126,12 +151,15 @@ class DeploymentService:
                 ) as handle:
                     archive_path = Path(handle.name)
                 try:
-                    await self.git.archive(resolved, sha, archive_path)
-                    self._validate_archive_paths(archive_path)
+                    try:
+                        await git.archive(resolved, sha, archive_path)
+                        self._validate_archive_paths(archive_path)
+                    except GitError as exc:
+                        raise DeploymentError(f"Git archive failed: {exc}", transcript) from exc
                     archive_hash = self._sha256_file(archive_path)
                     await note(f"archive ready sha256={archive_hash}")
 
-                    app_root = self.config.app_release_root(resolved.stack_name, resolved.name)
+                    app_root = config.app_release_root(resolved.stack_name, resolved.name)
                     releases = app_root / "releases"
                     token = uuid.uuid4().hex
                     remote_archive = app_root / f".botman-upload-{token}.tar"
@@ -230,7 +258,7 @@ class DeploymentService:
                     await note("current release switched")
 
                     build = await executor.run(
-                        (*self.compose.base_argv(resolved), "build", resolved.app.service),
+                        (*compose.base_argv(resolved), "build", resolved.app.service),
                         timeout=900,
                         check=False,
                     )
@@ -243,7 +271,7 @@ class DeploymentService:
 
                     up = await executor.run(
                         (
-                            *self.compose.base_argv(resolved),
+                            *compose.base_argv(resolved),
                             "up",
                             "-d",
                             "--no-deps",
@@ -257,13 +285,15 @@ class DeploymentService:
                         await self._restore_current(
                             executor, current, temp_link, previous_target, transcript
                         )
-                        rollback_ok = await self._rollback_activation(executor, resolved, transcript)
+                        rollback_ok = await self._rollback_activation(executor, resolved, transcript, compose)
                         message = "Compose activation failed; previous current restored"
                         message += "; rollback activation succeeded" if rollback_ok else "; rollback activation failed"
                         raise DeploymentError(message, transcript)
 
                     await note("deployment active")
-                    await self._prune_releases(executor, resolved, active_sha=sha, transcript=transcript)
+                    await self._prune_releases(
+                        executor, resolved, active_sha=sha, transcript=transcript, config=config
+                    )
                     return DeploymentResult(
                         status="deployed",
                         app_name=app_name,
@@ -282,8 +312,10 @@ class DeploymentService:
                 if staged is not None:
                     await executor.run(("rm", "-rf", "--", str(staged)), timeout=60, check=False)
 
-    async def _current_target(self, executor: Executor, resolved: ResolvedApp) -> str | None:
-        current = self.config.app_release_root(resolved.stack_name, resolved.name) / "current"
+    async def _current_target(
+        self, executor: Executor, resolved: ResolvedApp, config: BotmanConfig
+    ) -> str | None:
+        current = config.app_release_root(resolved.stack_name, resolved.name) / "current"
         result = await executor.run(("readlink", "--", str(current)), timeout=30, check=False)
         if result.ok:
             target = result.stdout.strip()
@@ -295,17 +327,53 @@ class DeploymentService:
         if not target:
             return None
         path = PurePosixPath(target)
-        candidate = path.name.lower()
+        if path.is_absolute() or len(path.parts) != 2 or path.parts[0] != "releases":
+            return None
+        candidate = path.parts[1].lower()
         return candidate if SHA_RE.fullmatch(candidate) else None
 
     @staticmethod
-    def _validate_archive_paths(path: Path) -> None:
+    def _resolve_archive_link(member_path: PurePosixPath, linkname: str) -> PurePosixPath:
+        link = PurePosixPath(linkname)
+        if not linkname or link.is_absolute():
+            raise ValueError(f"unsafe archive symlink target: {linkname!r}")
+        parts: list[str] = list(member_path.parent.parts)
+        for part in link.parts:
+            if part in {"", "."}:
+                continue
+            if part == "..":
+                if not parts:
+                    raise ValueError(f"archive symlink escapes release root: {linkname!r}")
+                parts.pop()
+                continue
+            parts.append(part)
+        return PurePosixPath(*parts)
+
+    @classmethod
+    def _validate_archive_paths(cls, path: Path) -> None:
         try:
             with tarfile.open(path, "r:") as archive:
                 for member in archive.getmembers():
                     member_path = PurePosixPath(member.name)
-                    if member_path.is_absolute() or ".." in member_path.parts:
+                    if (
+                        not member.name
+                        or member_path.is_absolute()
+                        or ".." in member_path.parts
+                        or member_path == PurePosixPath(".")
+                    ):
                         raise ValueError(f"unsafe archive member: {member.name!r}")
+                    if member.islnk():
+                        # git archive does not need hard links. Reject them rather
+                        # than relying on tar implementation-specific link handling.
+                        raise ValueError(
+                            f"hard links are not allowed in source archives: {member.name!r}"
+                        )
+                    if member.issym():
+                        cls._resolve_archive_link(member_path, member.linkname)
+                    if member.isdev() or member.isfifo():
+                        raise ValueError(
+                            f"special files are not allowed in source archives: {member.name!r}"
+                        )
         except (tarfile.TarError, OSError, ValueError) as exc:
             raise GitError(f"generated source archive is unsafe or unreadable: {exc}") from exc
 
@@ -383,9 +451,10 @@ class DeploymentService:
         executor: Executor,
         resolved: ResolvedApp,
         transcript: DeploymentTranscript,
+        compose: ComposeManager,
     ) -> bool:
         build = await executor.run(
-            (*self.compose.base_argv(resolved), "build", resolved.app.service),
+            (*compose.base_argv(resolved), "build", resolved.app.service),
             timeout=900,
             check=False,
         )
@@ -393,7 +462,7 @@ class DeploymentService:
         if not build.ok:
             return False
         up = await executor.run(
-            (*self.compose.base_argv(resolved), "up", "-d", "--no-deps", resolved.app.service),
+            (*compose.base_argv(resolved), "up", "-d", "--no-deps", resolved.app.service),
             timeout=180,
             check=False,
         )
@@ -407,8 +476,9 @@ class DeploymentService:
         *,
         active_sha: str,
         transcript: DeploymentTranscript,
+        config: BotmanConfig,
     ) -> None:
-        releases = self.config.app_release_root(resolved.stack_name, resolved.name) / "releases"
+        releases = config.app_release_root(resolved.stack_name, resolved.name) / "releases"
         result = await executor.run(
             (
                 "find",
@@ -439,7 +509,7 @@ class DeploymentService:
             if SHA_RE.fullmatch(name):
                 candidates.append((stamp, name))
         candidates.sort(reverse=True)
-        keep_count = self.config.settings.release_keep_count
+        keep_count = config.settings.release_keep_count
         kept: set[str] = {active_sha}
         for _, name in candidates:
             if len(kept) >= keep_count:

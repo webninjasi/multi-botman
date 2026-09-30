@@ -53,25 +53,38 @@ class CysystemdJournalStream:
             ) from exc
         return JournalOpenMode, Rule, AsyncJournalReader
 
+    async def _close_reader(self, reader: Any) -> None:
+        close = getattr(reader, "close", None)
+        if close is not None:
+            await _maybe_await(close())
+
     async def open_tail(self) -> None:
         mode, rule_type, factory = self._load_api()
         reader = factory()
-        await _maybe_await(reader.open(mode.SYSTEM))
-        await _maybe_await(reader.add_filter(rule_type("SYSLOG_IDENTIFIER", self.identifier)))
-        # Full MESSAGE data is required so the formatter, rather than libsystemd,
-        # owns Discord-only truncation behavior.
-        reader.data_threshold = 0
-        await _maybe_await(reader.seek_tail())
+        try:
+            await _maybe_await(reader.open(mode.SYSTEM))
+            await _maybe_await(reader.add_filter(rule_type("SYSLOG_IDENTIFIER", self.identifier)))
+            # Full MESSAGE data is required so the formatter, rather than libsystemd,
+            # owns Discord-only truncation behavior.
+            reader.data_threshold = 0
+            await _maybe_await(reader.seek_tail())
+        except Exception:
+            await self._close_reader(reader)
+            raise
         self._reader = reader
         self._skip_cursor_once = None
 
     async def open_cursor(self, cursor: str) -> None:
         mode, rule_type, factory = self._load_api()
         reader = factory()
-        await _maybe_await(reader.open(mode.SYSTEM))
-        await _maybe_await(reader.add_filter(rule_type("SYSLOG_IDENTIFIER", self.identifier)))
-        reader.data_threshold = 0
-        await _maybe_await(reader.seek_cursor(cursor))
+        try:
+            await _maybe_await(reader.open(mode.SYSTEM))
+            await _maybe_await(reader.add_filter(rule_type("SYSLOG_IDENTIFIER", self.identifier)))
+            reader.data_threshold = 0
+            await _maybe_await(reader.seek_cursor(cursor))
+        except Exception:
+            await self._close_reader(reader)
+            raise
         self._reader = reader
         # sd-journal seek semantics may position at the checkpoint itself. Skip
         # it once if observed; if iteration starts after it, this is a no-op.
@@ -104,7 +117,6 @@ class CysystemdJournalStream:
     async def close(self) -> None:
         if self._reader is None:
             return
-        close = getattr(self._reader, "close", None)
-        if close is not None:
-            await _maybe_await(close())
+        reader = self._reader
         self._reader = None
+        await self._close_reader(reader)

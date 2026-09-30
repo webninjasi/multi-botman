@@ -230,3 +230,67 @@ async def test_edit_commands_reject_empty_mutations(tmp_path: Path) -> None:
         await service.edit_server(name="local")
     with pytest.raises(ValueError, match="at least one stack field"):
         await service.edit_stack(channel_id=1234)
+
+@pytest.mark.asyncio
+async def test_app_edit_waits_for_shared_stack_lock(tmp_path: Path) -> None:
+    import asyncio
+
+    from botman.compose import StackLockRegistry
+
+    store = ConfigStore(tmp_path / "config.yaml")
+    await store.save(store.load_or_default())
+    locks = StackLockRegistry()
+    service = AdminConfigService(store, locks=locks)
+    await service.add_server(
+        name="local", server_type="local", compose_argv=("docker", "compose")
+    )
+    await service.add_stack(name="bots", server="local", channel_id=1234)
+    await service.add_app(
+        name="app",
+        channel_id=1234,
+        service="app",
+        repo_url="git@github.com:owner/app.git",
+    )
+
+    lock = await locks.get("bots")
+    await lock.acquire()
+    task = asyncio.create_task(
+        service.edit_app(name="app", channel_id=1234, branch="stable")
+    )
+    await asyncio.sleep(0)
+    assert not task.done()
+    assert store.load().stacks["bots"].apps["app"].git.branch == "main"
+
+    lock.release()
+    await task
+    assert store.load().stacks["bots"].apps["app"].git.branch == "stable"
+
+
+@pytest.mark.asyncio
+async def test_server_edit_waits_for_all_affected_stack_locks(tmp_path: Path) -> None:
+    import asyncio
+
+    from botman.compose import StackLockRegistry
+
+    store = ConfigStore(tmp_path / "config.yaml")
+    await store.save(store.load_or_default())
+    locks = StackLockRegistry()
+    service = AdminConfigService(store, locks=locks)
+    await service.add_server(
+        name="local", server_type="local", compose_argv=("docker", "compose")
+    )
+    await service.add_stack(name="one", server="local", channel_id=111)
+    await service.add_stack(name="two", server="local", channel_id=222)
+
+    second_lock = await locks.get("two")
+    await second_lock.acquire()
+    task = asyncio.create_task(
+        service.edit_server(name="local", compose_argv=("podman", "compose"))
+    )
+    await asyncio.sleep(0)
+    assert not task.done()
+    assert store.load().servers["local"].compose_argv == ("docker", "compose")
+
+    second_lock.release()
+    await task
+    assert store.load().servers["local"].compose_argv == ("podman", "compose")

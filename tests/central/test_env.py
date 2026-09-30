@@ -82,3 +82,32 @@ async def test_env_service_distinguishes_missing_and_writes_0600() -> None:
     assert shown.content == "TOKEN=secret\n"
     await service.unset("app-a", 1, "TOKEN")
     assert executor.files[path] == b""
+
+@pytest.mark.asyncio
+async def test_env_mutation_waits_for_shared_stack_lock(tmp_path) -> None:
+    import asyncio
+
+    from botman.compose import StackLockRegistry
+    from botman.config import ConfigStore
+
+    cfg = config()
+    store = ConfigStore(tmp_path / "config.yaml")
+    await store.save(cfg)
+    executor = MemoryExecutor()
+    locks = StackLockRegistry()
+    service = EnvService(
+        store,
+        executor_factory=lambda _: executor,
+        locks=locks,
+    )
+
+    lock = await locks.get("bots")
+    await lock.acquire()
+    task = asyncio.create_task(service.set("app-a", 1, "TOKEN", "secret"))
+    await asyncio.sleep(0)
+    assert not task.done()
+    assert executor.files == {}
+
+    lock.release()
+    path = await task
+    assert executor.files[path] == b"TOKEN=secret\n"

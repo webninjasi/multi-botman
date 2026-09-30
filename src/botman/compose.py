@@ -9,6 +9,7 @@ from typing import Literal
 
 import yaml
 
+from .config import ConfigStore
 from .executor import ExecResult, Executor, LocalExecutor, SSHExecutor
 from .models import BotmanConfig, LocalServerConfig, SSHServerConfig
 from .routing import ResolvedApp, authorize_app_channel
@@ -74,6 +75,17 @@ class ComposeManager:
             str(self.config.compose_path(resolved.stack_name)),
         )
 
+    async def _run_unlocked(
+        self,
+        resolved: ResolvedApp,
+        tail: tuple[str, ...],
+        *,
+        timeout: float | None = None,
+    ) -> ExecResult:
+        return await self.executor_factory(resolved).run(
+            (*self.base_argv(resolved), *tail), timeout=timeout
+        )
+
     async def _run_locked(
         self,
         resolved: ResolvedApp,
@@ -83,9 +95,19 @@ class ComposeManager:
     ) -> ExecResult:
         lock = await self.locks.get(resolved.stack_name)
         async with lock:
-            return await self.executor_factory(resolved).run(
-                (*self.base_argv(resolved), *tail), timeout=timeout
-            )
+            return await self._run_unlocked(resolved, tail, timeout=timeout)
+
+    async def execute_unlocked(
+        self, operation: LifecycleOperation, resolved: ResolvedApp
+    ) -> ExecResult:
+        tails: dict[LifecycleOperation, tuple[tuple[str, ...], float]] = {
+            "start": (("start", resolved.app.service), 60),
+            "stop": (("stop", resolved.app.service), 60),
+            "restart": (("restart", resolved.app.service), 120),
+            "status": (("ps", resolved.app.service), 30),
+        }
+        tail, timeout = tails[operation]
+        return await self._run_unlocked(resolved, tail, timeout=timeout)
 
     async def start(self, resolved: ResolvedApp) -> ExecResult:
         return await self._run_locked(resolved, ("start", resolved.app.service), timeout=60)
@@ -115,13 +137,19 @@ class LifecycleService:
 
     def __init__(
         self,
-        config: BotmanConfig,
+        config: BotmanConfig | ConfigStore,
         compose: ComposeManager | None = None,
         *,
         locks: StackLockRegistry | None = None,
     ):
-        self.config = config
-        self.compose = compose or ComposeManager(config, locks=locks)
+        self.config_source = config
+        initial = self._config()
+        self.compose = compose or ComposeManager(initial, locks=locks)
+
+    def _config(self) -> BotmanConfig:
+        if isinstance(self.config_source, ConfigStore):
+            return self.config_source.load_or_default()
+        return self.config_source
 
     async def execute(
         self,
@@ -130,9 +158,24 @@ class LifecycleService:
         app_name: str,
         channel_id: str | int,
     ) -> ExecResult:
-        resolved = authorize_app_channel(self.config, app_name, channel_id)
-        method = getattr(self.compose, operation)
-        return await method(resolved)
+        if not isinstance(self.config_source, ConfigStore):
+            resolved = authorize_app_channel(self.config_source, app_name, channel_id)
+            method = getattr(self.compose, operation)
+            return await method(resolved)
+
+        initial = authorize_app_channel(self._config(), app_name, channel_id)
+        lock = await self.compose.locks.get(initial.stack_name)
+        async with lock:
+            config = self._config()
+            resolved = authorize_app_channel(config, app_name, channel_id)
+            if resolved.stack_name != initial.stack_name:
+                raise RuntimeError("app stack changed while waiting for lifecycle lock; retry")
+            fresh = ComposeManager(
+                config,
+                executor_factory=self.compose.executor_factory,
+                locks=self.compose.locks,
+            )
+            return await fresh.execute_unlocked(operation, resolved)
 
 
 def validate_compose_yaml(
@@ -214,28 +257,33 @@ class ComposeAdminService:
 
     def __init__(
         self,
-        config: BotmanConfig,
+        config: BotmanConfig | ConfigStore,
         *,
         executor_factory: ExecutorFactory = executor_for_resolved_app,
         locks: StackLockRegistry | None = None,
     ):
-        self.config = config
+        self.config_source = config
         self.executor_factory = executor_factory
         self.locks = locks or StackLockRegistry()
 
-    def _resolved_for_stack(self, stack_name: str) -> ResolvedApp:
-        if stack_name not in self.config.stacks:
+    def _config(self) -> BotmanConfig:
+        if isinstance(self.config_source, ConfigStore):
+            return self.config_source.load_or_default()
+        return self.config_source
+
+    def _resolved_for_stack(self, config: BotmanConfig, stack_name: str) -> ResolvedApp:
+        if stack_name not in config.stacks:
             raise KeyError(f"unknown stack: {stack_name}")
-        for app_name in self.config.stacks[stack_name].apps:
+        for app_name in config.stacks[stack_name].apps:
             from .routing import resolve_app
 
-            return resolve_app(self.config, stack_name, app_name)
+            return resolve_app(config, stack_name, app_name)
 
         # A stack may be configured before its first app. Build the minimum
         # resolved shape expected by executor factories using a synthetic app
         # is deliberately avoided; use a small stack-aware executor helper.
-        stack = self.config.stacks[stack_name]
-        server = self.config.servers[stack.server]
+        stack = config.stacks[stack_name]
+        server = config.servers[stack.server]
         from .models import AppConfig, GitConfig
 
         placeholder = AppConfig(
@@ -252,9 +300,12 @@ class ComposeAdminService:
             server=server,
         )
 
-    def _base_argv(self, stack_name: str, compose_file: PurePosixPath) -> tuple[str, ...]:
-        stack = self.config.stacks[stack_name]
-        server = self.config.servers[stack.server]
+    @staticmethod
+    def _base_argv(
+        config: BotmanConfig, stack_name: str, compose_file: PurePosixPath
+    ) -> tuple[str, ...]:
+        stack = config.stacks[stack_name]
+        server = config.servers[stack.server]
         return (
             *server.compose_argv,
             "-p",
@@ -266,17 +317,22 @@ class ComposeAdminService:
     async def upload(self, stack_name: str, content: bytes | str) -> ExecResult:
         """Validate, runtime-check, then atomically activate a Compose file."""
 
-        validate_compose_yaml(self.config, stack_name, content)
         payload = content.encode("utf-8") if isinstance(content, str) else content
-        resolved = self._resolved_for_stack(stack_name)
-        executor = self.executor_factory(resolved)
-        stack_root = self.config.stack_root(stack_name)
-        target = self.config.compose_path(stack_name)
-        import uuid
-
-        staged = stack_root / f".{target.name}.botman-{uuid.uuid4().hex}.tmp"
+        # Immutable config objects can fail fast. Store-backed commands wait
+        # first so a concurrent admin edit cannot make this pre-check stale.
+        if not isinstance(self.config_source, ConfigStore):
+            validate_compose_yaml(self.config_source, stack_name, payload)
         lock = await self.locks.get(stack_name)
         async with lock:
+            config = self._config()
+            validate_compose_yaml(config, stack_name, payload)
+            resolved = self._resolved_for_stack(config, stack_name)
+            executor = self.executor_factory(resolved)
+            stack_root = config.stack_root(stack_name)
+            target = config.compose_path(stack_name)
+            import uuid
+
+            staged = stack_root / f".{target.name}.botman-{uuid.uuid4().hex}.tmp"
             await executor.run(("mkdir", "-p", "--", str(stack_root)), timeout=30, check=True)
             try:
                 write_bytes = getattr(executor, "write_bytes", None)
@@ -284,24 +340,29 @@ class ComposeAdminService:
                     raise ComposeTransportError("executor does not support file writes")
                 await write_bytes(staged, payload, mode=0o640, atomic=False)
                 result = await executor.run(
-                    (*self._base_argv(stack_name, staged), "config"),
+                    (*self._base_argv(config, stack_name, staged), "config"),
                     timeout=60,
                     check=False,
                 )
                 if not result.ok:
                     raise ComposeRuntimeValidationError(result)
-                await executor.run(("mv", "--", str(staged), str(target)), timeout=30, check=True)
+                # Re-write the validated payload through the executor's atomic
+                # replacement primitive. This avoids shell/coreutils-specific
+                # rename semantics and guarantees an existing active file is
+                # left untouched if final activation fails.
+                await write_bytes(target, payload, mode=0o640, atomic=True)
                 return result
             finally:
                 await executor.run(("rm", "-f", "--", str(staged)), timeout=30, check=False)
 
     async def show(self, stack_name: str) -> str:
-        resolved = self._resolved_for_stack(stack_name)
+        config = self._config()
+        resolved = self._resolved_for_stack(config, stack_name)
         executor = self.executor_factory(resolved)
         read_bytes = getattr(executor, "read_bytes", None)
         if not callable(read_bytes):
             raise ComposeTransportError("executor does not support file reads")
-        data = await read_bytes(self.config.compose_path(stack_name))
+        data = await read_bytes(config.compose_path(stack_name))
         if len(data) > MAX_COMPOSE_BYTES:
             raise ComposeTransportError(
                 f"stored Compose file exceeds supported {MAX_COMPOSE_BYTES}-byte limit"

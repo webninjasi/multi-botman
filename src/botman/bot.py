@@ -46,12 +46,12 @@ def create_bot(config_path: str | Path):
     def lifecycle_service() -> LifecycleService:
         # Reload for every interaction so future admin config changes take
         # effect immediately without restarting the central bot.
-        return LifecycleService(store.load_or_default(), locks=shared_locks)
+        return LifecycleService(store, locks=shared_locks)
 
     register_lifecycle_commands(bot, LifecycleCommandAdapter(lifecycle_service))
 
     def deployment_service() -> DeploymentService:
-        return DeploymentService(store.load_or_default(), locks=shared_locks)
+        return DeploymentService(store, locks=shared_locks)
 
     register_update_command(bot, UpdateCommandAdapter(deployment_service))
 
@@ -69,6 +69,7 @@ def create_bot(config_path: str | Path):
         store,
         admin_ids=os.environ.get("ADMIN_IDS"),
         locks=shared_locks,
+        agent_locks=agent_locks,
     )
     return bot
 

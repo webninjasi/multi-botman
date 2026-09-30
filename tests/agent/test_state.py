@@ -39,3 +39,19 @@ def test_stale_same_subscription_starts_tail_with_gap_marker():
     )
     assert decision.mode == "tail"
     assert decision.gap_marker
+
+
+def test_corrupt_state_is_distinguished_from_missing_state(tmp_path):
+    from botman_agent.state import CorruptStateError
+
+    store = StateStore(tmp_path)
+    path = store.path_for("app-a")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("not-json", encoding="utf-8")
+
+    try:
+        store.load("app-a")
+    except CorruptStateError:
+        pass
+    else:
+        raise AssertionError("corrupt checkpoint should not look like a missing checkpoint")

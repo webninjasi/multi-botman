@@ -193,3 +193,34 @@ services:
 def test_compose_validation_rejects_invalid_managed_service_config(content: bytes, match: str) -> None:
     with pytest.raises(ComposeValidationError, match=match):
         validate_compose_yaml(config_two_apps(), "bots", content)
+
+@pytest.mark.asyncio
+async def test_store_backed_lifecycle_reloads_config_after_waiting_for_stack_lock(
+    tmp_path,
+) -> None:
+    from botman.compose import StackLockRegistry
+    from botman.config import ConfigStore
+
+    cfg = config_two_apps()
+    store = ConfigStore(tmp_path / "config.yaml")
+    await store.save(cfg)
+    locks = StackLockRegistry()
+    executor = RecordingExecutor()
+    service = LifecycleService(store, locks=locks)
+    service.compose.executor_factory = lambda _: executor
+
+    lock = await locks.get("bots")
+    await lock.acquire()
+    task = asyncio.create_task(
+        service.execute("restart", app_name="app-a", channel_id=111)
+    )
+    await asyncio.sleep(0)
+
+    def edit(config):
+        config.stacks["bots"].apps["app-a"].service = "svc-new"
+
+    await store.mutate(edit)
+    lock.release()
+    await task
+
+    assert executor.calls[-1][-2:] == ("restart", "svc-new")

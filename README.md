@@ -12,6 +12,7 @@ Implemented and covered by the current automated suite:
 - channel -> stack -> stack-local app -> server routing and command-channel authorization
 - argv-safe local and strictly host-verified SSH/SFTP execution
 - stack-scoped Compose identity, per-stack locks, service-only lifecycle operations
+- runtime-affecting config/Git/env admin mutations share the same stack operation lock
 - hybrid Discord `/start|stop|restart|status` + prefix equivalents
 - slash-only admin onboarding for servers, stacks, apps, Compose, Git keys, agent sync/status, and env files
 - runtime `compose config` validation before atomic Compose activation
@@ -20,9 +21,10 @@ Implemented and covered by the current automated suite:
 - target `botman-log-agent`: cysystemd 2.x direct async journal reading, bounded/backpressured webhook delivery, line-aware Discord formatting, atomic checkpoints, restart/gap policy, and per-app supervision
 - persistent `/livelogs start|stop` with webhook/thread repair, server-scoped synchronization, and rollback on target-agent restart failure
 - `botman-log-export` plus `/logs tail|download` for retained journald history in human or JSONL gzip parts
-- central and agent systemd unit files
+- central and agent systemd unit files with restrictive default umasks
+- clean-checkout CI for Python 3.11-3.13 plus wheel-content/entry-point verification
 
-The automated suite currently passes **118 tests**.
+The automated suite currently passes **155 tests**.
 
 Still required before calling v1 production-complete:
 

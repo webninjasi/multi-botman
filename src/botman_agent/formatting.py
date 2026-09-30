@@ -92,9 +92,13 @@ def render_entry(message: str, *, limit: int = DEFAULT_LIMIT) -> list[RenderedSe
     ]
 
 
-def gap_marker(*, limit: int = DEFAULT_LIMIT) -> str:
+def gap_marker(
+    *,
+    limit: int = DEFAULT_LIMIT,
+    reason: str = "checkpoint was too old to resume safely",
+) -> str:
     content = _wrap(
-        "[Botman] Live-log checkpoint was too old to resume safely; continuing from the live tail. "
+        f"[Botman] Live-log {reason}; continuing from the live tail. "
         "Use /logs download for the skipped interval."
     )
     if len(content) > limit:

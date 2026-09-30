@@ -79,3 +79,20 @@ async def test_cursor_checkpoint_itself_is_skipped_once():
     await stream.open_cursor("c1")
     rows = [row async for row in stream.records()]
     assert [r.cursor for r in rows] == ["c2"]
+
+
+@pytest.mark.asyncio
+async def test_failed_cursor_seek_closes_partially_opened_reader():
+    class FailingReader(Reader):
+        async def seek_cursor(self, cursor):
+            raise RuntimeError("cursor unavailable")
+
+    reader = FailingReader([])
+    stream = CysystemdJournalStream(
+        "tag-a", reader_factory=lambda: reader, api=(SimpleNamespace(SYSTEM="system"), Rule)
+    )
+
+    with pytest.raises(RuntimeError, match="cursor unavailable"):
+        await stream.open_cursor("gone")
+
+    assert reader.closed

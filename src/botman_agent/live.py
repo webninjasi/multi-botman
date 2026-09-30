@@ -11,7 +11,7 @@ from .config import AgentApp, AgentSettings
 from .discord_sink import DiscordWebhookSink, FatalDiscordDestinationError
 from .formatting import gap_marker, render_entry
 from .journal import CysystemdJournalStream
-from .state import AppState, StateStore, choose_start
+from .state import AppState, CorruptStateError, StateStore, choose_start
 
 LOG = logging.getLogger(__name__)
 
@@ -34,7 +34,14 @@ async def run_live_app(
         return
     assert app.subscription_id is not None
     stream = journal_factory(app.identifier)
-    state = state_store.load(app_name)
+    marker_reason: str | None = None
+    try:
+        state = state_store.load(app_name)
+    except CorruptStateError:
+        LOG.warning("discarding corrupt live-log checkpoint for %s", app_name, exc_info=True)
+        state_store.delete(app_name)
+        state = None
+        marker_reason = "saved checkpoint was corrupt and could not be resumed"
     decision = choose_start(
         state,
         subscription_id=app.subscription_id,
@@ -44,14 +51,33 @@ async def run_live_app(
     try:
         if decision.mode == "cursor":
             assert decision.cursor is not None
-            await stream.open_cursor(decision.cursor)
+            try:
+                await stream.open_cursor(decision.cursor)
+            except Exception:
+                LOG.warning(
+                    "saved journal cursor for %s is unavailable; falling back to live tail",
+                    app_name,
+                    exc_info=True,
+                )
+                await stream.open_tail()
+                state_store.delete(app_name)
+                marker_reason = "saved journal cursor is no longer available"
         else:
             await stream.open_tail()
             if decision.gap_marker:
-                try:
-                    await sink.send(gap_marker(limit=settings.discord_message_limit))
-                except FatalDiscordDestinationError as exc:
-                    raise AppSuspendedError(str(exc)) from exc
+                state_store.delete(app_name)
+                marker_reason = "checkpoint was too old to resume safely"
+
+        if marker_reason is not None:
+            try:
+                await sink.send(
+                    gap_marker(
+                        limit=settings.discord_message_limit,
+                        reason=marker_reason,
+                    )
+                )
+            except FatalDiscordDestinationError as exc:
+                raise AppSuspendedError(str(exc)) from exc
 
         async for record in stream.records():
             segments = render_entry(record.message, limit=settings.discord_message_limit)
@@ -87,7 +113,11 @@ async def supervise_live_app(
             result = runner()
             if asyncio.iscoroutine(result):
                 await result
-            return
+            if not app.enabled:
+                return
+            LOG.warning("live logging stream ended unexpectedly for %s; restarting", app_name)
+            await sleep(delay)
+            delay = min(30.0, delay * 2)
         except AppSuspendedError:
             LOG.exception("live logging suspended for %s until the agent is reconfigured/restarted", app_name)
             return

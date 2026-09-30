@@ -152,3 +152,98 @@ async def test_supervisor_restarts_unexpected_error_but_not_suspension():
 
     await supervise_live_app("app-a", app, AgentSettings(), runner=suspended, sleep=sleep)
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_unusable_saved_cursor_falls_back_to_tail_and_clears_checkpoint(tmp_path):
+    store = StateStore(tmp_path)
+    store.save("app-a", AppState(subscription_id="s1", cursor="gone", last_realtime_usec=900))
+
+    class CursorFailStream(FakeStream):
+        async def open_cursor(self, cursor):
+            self.opened = ("cursor-failed", cursor)
+            raise RuntimeError("cursor not found")
+
+    stream = CursorFailStream("tag", [])
+    sink = Sink()
+    app = AgentApp(
+        identifier="tag",
+        enabled=True,
+        webhook_url="https://discord.example/hook",
+        thread_id="123",
+        subscription_id="s1",
+    )
+    settings = AgentSettings(state_dir=tmp_path, resume_max_age_sec=300)
+
+    await run_live_app(
+        "app-a",
+        app,
+        settings,
+        state_store=store,
+        sink=sink,
+        journal_factory=lambda _: stream,
+        now_usec=lambda: 1_000,
+    )
+
+    assert stream.opened == ("tail", None)
+    assert store.load("app-a") is None
+    assert "cursor is no longer available" in sink.sent[0]
+
+
+@pytest.mark.asyncio
+async def test_enabled_supervisor_restarts_when_stream_ends_normally():
+    calls = 0
+    sleeps = []
+
+    async def sleep(value):
+        sleeps.append(value)
+
+    async def runner():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return
+        raise AppSuspendedError("stop test")
+
+    app = AgentApp(
+        identifier="tag",
+        enabled=True,
+        webhook_url="https://discord.example/hook",
+        thread_id="123",
+        subscription_id="s1",
+    )
+    await supervise_live_app("app-a", app, AgentSettings(), runner=runner, sleep=sleep)
+
+    assert calls == 2
+    assert sleeps == [1.0]
+
+
+@pytest.mark.asyncio
+async def test_corrupt_checkpoint_is_discarded_and_tails_with_marker(tmp_path):
+    store = StateStore(tmp_path)
+    path = store.path_for("app-a")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not-json", encoding="utf-8")
+    stream = FakeStream("tag", [])
+    sink = Sink()
+    app = AgentApp(
+        identifier="tag",
+        enabled=True,
+        webhook_url="https://discord.example/hook",
+        thread_id="123",
+        subscription_id="s1",
+    )
+
+    await run_live_app(
+        "app-a",
+        app,
+        AgentSettings(state_dir=tmp_path),
+        state_store=store,
+        sink=sink,
+        journal_factory=lambda _: stream,
+        now_usec=lambda: 1_000,
+    )
+
+    assert stream.opened == ("tail", None)
+    assert not path.exists()
+    assert "checkpoint was corrupt" in sink.sent[0]

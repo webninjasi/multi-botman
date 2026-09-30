@@ -354,6 +354,7 @@ class BotmanConfig(StrictModel):
         for server_name in self.servers:
             _validate_safe_name(server_name, label="server name")
         channels: dict[str, str] = {}
+        projects: dict[tuple[str, str], str] = {}
         per_server_log_ids: set[tuple[str, str]] = set()
         for stack_name, stack in self.stacks.items():
             _validate_safe_name(stack_name, label="stack name")
@@ -364,14 +365,33 @@ class BotmanConfig(StrictModel):
             previous = channels.setdefault(stack.channel_id, stack_name)
             if previous != stack_name:
                 raise ValueError(
-                    f"channel_id {stack.channel_id!r} is assigned to both {previous!r} and {stack_name!r}"
+                    f"channel_id {stack.channel_id!r} is assigned to both "
+                    f"{previous!r} and {stack_name!r}"
                 )
+
+            project_key = (stack.server, stack.project_name)
+            previous_project = projects.setdefault(project_key, stack_name)
+            if previous_project != stack_name:
+                raise ValueError(
+                    f"Compose project_name {stack.project_name!r} on server "
+                    f"{stack.server!r} is assigned to both {previous_project!r} "
+                    f"and {stack_name!r}"
+                )
+
+            services: dict[str, str] = {}
             for app_name, app in stack.apps.items():
                 _validate_safe_name(app_name, label="app name")
+                previous_app = services.setdefault(app.service, app_name)
+                if previous_app != app_name:
+                    raise ValueError(
+                        f"Compose service {app.service!r} in stack {stack_name!r} "
+                        f"is assigned to both {previous_app!r} and {app_name!r}"
+                    )
                 log_key = (stack.server, app.log_identifier)
                 if log_key in per_server_log_ids:
                     raise ValueError(
-                        f"duplicate log_identifier {app.log_identifier!r} on server {stack.server!r}"
+                        f"duplicate log_identifier {app.log_identifier!r} on server "
+                        f"{stack.server!r}"
                     )
                 per_server_log_ids.add(log_key)
         return self
