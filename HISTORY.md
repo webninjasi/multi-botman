@@ -1,4 +1,14 @@
 # Project History and Pivots
+## 2026-09-30 — Config edit UX
+
+- Added `/config server edit`, `/config stack edit`, and `/config app edit`.
+- Stack/app edits resolve stack identity from the invoking channel; no global app lookup or stack option was reintroduced.
+- Server edits preserve unspecified fields and support explicit known-hosts-path clearing without disabling SSH host verification.
+- Established stack identity/location edits are rejected once apps exist to avoid silent partial migrations.
+- App journal identifiers cannot change while live logging is active, preventing target-agent subscription drift.
+- Added focused regression coverage; automated suite is now 127 tests.
+- Added deterministic formatter fuzz coverage for Discord payload budget/order preservation.
+
 
 ## Legacy JavaScript prototype
 
@@ -74,7 +84,7 @@ Because nothing had been deployed, the project deliberately chose not to preserv
 
 ## Current state
 
-Planning is complete and fresh implementation has started. Phase 1 (models/config/security executor/routing) is complete. Phase 2 Compose command construction, stack locking, lifecycle core, and Compose validation are implemented; Discord command adapters and upload transport remain. The archived code remains reference-only.
+The fresh implementation includes central lifecycle/Compose control, Discord adapters, Git-SHA deployments with rollback, env/config onboarding and edits, live journald delivery, and historical exports. Automated unit coverage is complete for these paths; real Docker/Podman, journald/cysystemd, and Discord test-guild acceptance remains before v1 is declared complete. The archived code remains reference-only.
 
 ## Fresh implementation progress (2026-09-30)
 

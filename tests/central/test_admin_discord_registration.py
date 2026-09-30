@@ -100,3 +100,37 @@ def test_stack_scoped_admin_commands_do_not_expose_stack_option(tmp_path, monkey
     assert "stack" not in inspect.signature(compose_upload).parameters
     assert "stack" not in inspect.signature(compose_show).parameters
     assert "stack" not in inspect.signature(git_setup).parameters
+
+
+def test_config_edit_commands_are_registered_and_stack_scoped(tmp_path, monkeypatch) -> None:
+    fake_app_commands = SimpleNamespace(Group=FakeGroup)
+    fake_discord = SimpleNamespace(
+        app_commands=fake_app_commands,
+        Interaction=type("Interaction", (), {}),
+        Attachment=type("Attachment", (), {}),
+    )
+    monkeypatch.setitem(sys.modules, "discord", fake_discord)
+
+    bot = FakeBot()
+    register_admin_commands(
+        bot,
+        ConfigStore(tmp_path / "config.yaml"),
+        admin_ids="1",
+        locks=StackLockRegistry(),
+    )
+    config_group = bot.tree.commands[0]
+    groups = {child.name: child for child in config_group.children if isinstance(child, FakeGroup)}
+
+    server_names = {c.__command_name__ for c in groups["server"].children}
+    stack_names = {c.__command_name__ for c in groups["stack"].children}
+    app_names = {c.__command_name__ for c in groups["app"].children}
+    assert {"add", "edit", "test"} <= server_names
+    assert {"add", "edit"} <= stack_names
+    assert {"add", "edit"} <= app_names
+
+    stack_edit = next(c for c in groups["stack"].children if c.__command_name__ == "edit")
+    app_edit = next(c for c in groups["app"].children if c.__command_name__ == "edit")
+    assert "stack" not in inspect.signature(stack_edit).parameters
+    assert "stack" not in inspect.signature(app_edit).parameters
+    assert "channel_id" not in inspect.signature(stack_edit).parameters
+    assert "channel_id" not in inspect.signature(app_edit).parameters

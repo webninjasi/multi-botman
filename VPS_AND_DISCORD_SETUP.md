@@ -326,6 +326,27 @@ Provide:
 
 The stack is inferred from the channel where `/config app add` is run. Adding the app first is important: Compose validation can then verify that app's service/build context/journald tag.
 
+### Correcting configuration after onboarding
+
+Configuration edit commands are slash-only/admin-only/ephemeral. Stack and app edits
+resolve the stack from the channel where the command is run:
+
+```text
+/config server edit
+/config server test
+/config stack edit
+/config app edit
+```
+
+`/config server edit` changes only supplied values. Re-run `/config server test` after
+changing SSH or Compose-runtime settings. `/config stack edit` can correct the target
+server, Compose project name, or Compose filename only **before apps are added**;
+once apps exist Botman rejects those changes because moving an established stack needs
+a real filesystem/container migration. `/config app edit APP` can update the Compose
+service, repository URL, branch, or journal identifier. Stop live logs before changing
+the journal identifier. None of these edits deploy, restart, upload Compose, or rotate
+Git keys automatically.
+
 ### Upload the shared stack Compose file
 
 ```text

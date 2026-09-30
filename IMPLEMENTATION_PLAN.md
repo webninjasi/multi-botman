@@ -269,7 +269,7 @@ Provisioning must fail if a critical command fails; no “warning but success”
 - attachment part splitting
 - cleanup after success and failure
 
-## Phase 7 — Admin env/config UX — PARTIALLY PULLED FORWARD
+## Phase 7 — Admin env/config UX — UNIT COMPLETE
 
 ### Env
 

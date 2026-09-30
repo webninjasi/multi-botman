@@ -180,6 +180,27 @@ Suggested group structure:
 
 Exact Discord nesting can be adjusted to platform limits, but preserve the concepts.
 
+### Edit semantics
+
+`/config server edit NAME` updates only fields explicitly supplied. It may switch a
+server between local and SSH modes; switching to SSH requires `host`, `user`, and
+`key`. `clear_known_hosts:true` removes an explicit known-hosts path and returns to
+normal OpenSSH/AsyncSSH known-hosts discovery; it never disables host verification.
+Run `/config server test NAME` after connectivity/runtime edits.
+
+`/config stack edit` resolves the stack from the current channel and therefore does
+not expose a stack-name option. Server, Compose project name, and Compose filename
+may be corrected only before apps are added. Once a stack contains apps, changing
+those identity/location fields would require moving deployed files/containers, so the
+edit is rejected rather than leaving partially migrated state. Stack renames are not
+supported.
+
+`/config app edit APP` also resolves the stack from the current channel. It can
+update the Compose service, Git repository URL/branch, and journal identifier without
+renaming the app. A journal identifier cannot be changed while live logging is
+enabled; stop live logs first so the target agent cannot retain a stale subscription.
+Edits do not upload Compose, restart containers, rotate keys, or deploy automatically.
+
 ### Stack creation
 
 Prefer invocation channel as the stack command channel. Require server and stack name. Derive stack filesystem/project path/name where possible rather than accepting arbitrary shell paths.

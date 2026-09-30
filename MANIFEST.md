@@ -47,7 +47,7 @@ Updated 2026-09-30 for the fresh Botman implementation.
 - `tests/central/`
 - `tests/agent/`
 
-Current fresh result: **118 passed**.
+Current fresh result: **127 passed**.
 
 ## Operator/design documentation
 

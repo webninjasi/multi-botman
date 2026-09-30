@@ -87,6 +87,43 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
         except Exception as exc:
             await fail(interaction, exc)
 
+    @server_group.command(name="edit", description="Edit an existing managed server.")
+    async def server_edit(
+        interaction: discord.Interaction,
+        name: str,
+        server_type: Literal["local", "ssh"] | None = None,
+        compose_argv: str | None = None,
+        host: str | None = None,
+        port: int | None = None,
+        user: str | None = None,
+        key: str | None = None,
+        known_hosts: str | None = None,
+        clear_known_hosts: bool = False,
+        connect_timeout_sec: float | None = None,
+    ):
+        if not await begin(interaction):
+            return
+        try:
+            argv = parse_compose_argv(compose_argv) if compose_argv is not None else None
+            await config_service.edit_server(
+                name=name,
+                server_type=server_type,
+                compose_argv=argv,
+                host=host,
+                port=port,
+                user=user,
+                key=key,
+                known_hosts=known_hosts,
+                clear_known_hosts=clear_known_hosts,
+                connect_timeout_sec=connect_timeout_sec,
+            )
+            await interaction.followup.send(
+                f"Server `{name}` updated. Run `/config server test` to verify access.",
+                ephemeral=True,
+            )
+        except Exception as exc:
+            await fail(interaction, exc)
+
     @server_group.command(name="test", description="Test SSH/local access and Compose availability.")
     async def server_test(interaction: discord.Interaction, name: str):
         if not await begin(interaction):
@@ -129,6 +166,31 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
         except Exception as exc:
             await fail(interaction, exc)
 
+    @stack_group.command(name="edit", description="Edit this channel's stack before apps are added.")
+    async def stack_edit(
+        interaction: discord.Interaction,
+        server: str | None = None,
+        project_name: str | None = None,
+        compose_file: Literal["compose.yml", "compose.yaml"] | None = None,
+    ):
+        if not await begin(interaction):
+            return
+        try:
+            if interaction.channel_id is None:
+                raise ValueError("stack editing must be run in a configured stack channel")
+            await config_service.edit_stack(
+                channel_id=interaction.channel_id,
+                server=server,
+                project_name=project_name,
+                compose_file=compose_file,
+            )
+            await interaction.followup.send(
+                "Stack configuration updated. No deployment was performed.",
+                ephemeral=True,
+            )
+        except Exception as exc:
+            await fail(interaction, exc)
+
     @app_group.command(name="add", description="Add an independently deployed app to a stack.")
     async def app_add(
         interaction: discord.Interaction,
@@ -153,6 +215,35 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
             )
             await interaction.followup.send(
                 f"App `{name}` added. Run `/config git setup` before `/update`.",
+                ephemeral=True,
+            )
+        except Exception as exc:
+            await fail(interaction, exc)
+
+    @app_group.command(name="edit", description="Edit an app in this channel's stack.")
+    async def app_edit(
+        interaction: discord.Interaction,
+        app: str,
+        service: str | None = None,
+        repo_url: str | None = None,
+        branch: str | None = None,
+        log_identifier: str | None = None,
+    ):
+        if not await begin(interaction):
+            return
+        try:
+            if interaction.channel_id is None:
+                raise ValueError("app editing must be run in a configured stack channel")
+            await config_service.edit_app(
+                name=app,
+                channel_id=interaction.channel_id,
+                service=service,
+                repo_url=repo_url,
+                branch=branch,
+                log_identifier=log_identifier,
+            )
+            await interaction.followup.send(
+                f"App `{app}` updated. No Compose upload, restart, or deployment was performed.",
                 ephemeral=True,
             )
         except Exception as exc:

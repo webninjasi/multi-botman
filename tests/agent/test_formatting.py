@@ -38,3 +38,33 @@ def test_non_huge_lines_appear_once_under_small_budget():
     for part in parts:
         recovered.extend(unwrap(part.content).split("\n"))
     assert recovered == lines
+
+
+def test_deterministic_fuzz_preserves_non_huge_lines_and_budget():
+    import random
+
+    from botman_agent.formatting import CODE_CLOSE, CODE_OPEN, sanitize_markdown
+
+    rng = random.Random(20260930)
+    alphabet = "abcXYZ012 -_/@`"
+    for _ in range(400):
+        limit = rng.randint(40, 220)
+        budget = limit - len(CODE_OPEN) - len(CODE_CLOSE)
+        line_count = rng.randint(1, 20)
+        raw_lines = []
+        for _line in range(line_count):
+            # Leave enough headroom for markdown fence sanitization to add a
+            # character without turning this into a deliberate huge-line case.
+            length = rng.randint(0, max(0, budget - 8))
+            line = "".join(rng.choice(alphabet) for _ in range(length))
+            raw_lines.append(line)
+
+        parts = render_entry("\n".join(raw_lines), limit=limit)
+        assert parts
+        assert all(len(part.content) <= limit for part in parts)
+        assert [part.final_for_entry for part in parts] == [False] * (len(parts) - 1) + [True]
+
+        recovered = []
+        for part in parts:
+            recovered.extend(unwrap(part.content).split("\n"))
+        assert recovered == [sanitize_markdown(line) for line in raw_lines]
