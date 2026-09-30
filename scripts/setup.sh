@@ -11,19 +11,24 @@ CENTRAL_USER="botman"
 MANAGEMENT_USER="botmgr"
 AGENT_USER="botman-log-agent"
 JOURNAL_MAX_USE="1G"
+RUNTIME="auto"
+TARGET_RUNTIME=""
 
 usage() {
   cat <<'USAGE'
 Usage: sudo scripts/setup.sh [options]
 
 Install Botman using the canonical Git checkout + external-venv layout.
-The target role configures rootless Podman for botmgr.
+The target role detects an existing Docker or Podman runtime. Podman targets are
+configured rootlessly; Docker targets grant botmgr access to the existing daemon.
 
 Options:
   --mode central|target|all   Components to install (default: all)
   --repo-url URL             Git repository URL
   --branch NAME              Git branch to clone (default: main)
   --journal-max-use SIZE     journald SystemMaxUse (default: 1G)
+  --runtime auto|docker|podman
+                             Target runtime (default: auto-detect)
   -h, --help                 Show this help
 
 Fresh-host examples:
@@ -42,6 +47,7 @@ while (($#)); do
     --repo-url) REPO_URL="${2:?missing value for --repo-url}"; shift 2 ;;
     --branch) BRANCH="${2:?missing value for --branch}"; shift 2 ;;
     --journal-max-use) JOURNAL_MAX_USE="${2:?missing value for --journal-max-use}"; shift 2 ;;
+    --runtime) RUNTIME="${2:?missing value for --runtime}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -50,6 +56,11 @@ done
 case "$MODE" in
   central|target|all) ;;
   *) echo "--mode must be central, target, or all" >&2; exit 2 ;;
+esac
+
+case "$RUNTIME" in
+  auto|docker|podman) ;;
+  *) echo "--runtime must be auto, docker, or podman" >&2; exit 2 ;;
 esac
 
 if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
@@ -63,12 +74,50 @@ fail() { echo "ERROR: $*" >&2; exit 1; }
 has_central() { [[ "$MODE" == "central" || "$MODE" == "all" ]]; }
 has_target() { [[ "$MODE" == "target" || "$MODE" == "all" ]]; }
 
+runtime_compose_works() {
+  local runtime="$1"
+  case "$runtime" in
+    docker) command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 ;;
+    podman) command -v podman >/dev/null 2>&1 && podman compose version >/dev/null 2>&1 ;;
+    *) return 1 ;;
+  esac
+}
+
+detect_existing_runtime() {
+  has_target || return 0
+
+  if [[ "$RUNTIME" != "auto" ]]; then
+    if command -v "$RUNTIME" >/dev/null 2>&1; then
+      TARGET_RUNTIME="$RUNTIME"
+      return 0
+    fi
+    TARGET_RUNTIME="$RUNTIME"
+    return 0
+  fi
+
+  local docker_ok=false podman_ok=false
+  runtime_compose_works docker && docker_ok=true
+  runtime_compose_works podman && podman_ok=true
+
+  if $docker_ok && $podman_ok; then
+    fail "both Docker Compose and Podman Compose are installed; rerun with --runtime docker or --runtime podman"
+  elif $docker_ok; then
+    TARGET_RUNTIME="docker"
+  elif $podman_ok; then
+    TARGET_RUNTIME="podman"
+  elif command -v docker >/dev/null 2>&1; then
+    fail "Docker is installed but 'docker compose' is unavailable; install the Docker Compose plugin or choose --runtime podman"
+  elif command -v podman >/dev/null 2>&1; then
+    fail "Podman is installed but 'podman compose' is unavailable; install a Compose provider before rerunning setup"
+  fi
+}
+
 install_os_packages() {
   log "Installing OS prerequisites"
   if command -v dnf >/dev/null 2>&1; then
     local packages=(git openssh-clients ca-certificates sudo shadow-utils util-linux)
     if has_target; then
-      packages+=(podman gcc systemd-devel)
+      packages+=(gcc systemd-devel)
     fi
     dnf install -y "${packages[@]}"
   elif command -v apt-get >/dev/null 2>&1; then
@@ -76,12 +125,55 @@ install_os_packages() {
     apt-get update
     local packages=(git openssh-client ca-certificates sudo passwd util-linux python3-venv python3-pip)
     if has_target; then
-      packages+=(podman uidmap dbus-user-session build-essential libsystemd-dev python3-dev)
+      packages+=(build-essential libsystemd-dev python3-dev)
     fi
     apt-get install -y "${packages[@]}"
   else
-    fail "unsupported package manager; install Git, OpenSSH, sudo, Python 3.11+, and target Podman/systemd development packages manually"
+    fail "unsupported package manager; install Git, OpenSSH, sudo, Python 3.11+, and libsystemd development headers manually"
   fi
+}
+
+ensure_target_runtime() {
+  has_target || return 0
+
+  if [[ -z "$TARGET_RUNTIME" ]]; then
+    # Preserve the historical fresh-host default, but only attempt Podman when
+    # the distribution actually advertises a package for it. Existing Docker
+    # installations are detected before this point and are never replaced.
+    if command -v dnf >/dev/null 2>&1 && dnf -q list --available podman >/dev/null 2>&1; then
+      TARGET_RUNTIME="podman"
+    elif command -v apt-cache >/dev/null 2>&1 && apt-cache show podman >/dev/null 2>&1; then
+      TARGET_RUNTIME="podman"
+    else
+      fail "no usable Docker/Podman Compose runtime found. Install Docker with 'docker compose' or Podman with a Compose provider, then rerun setup (optionally with --runtime docker|podman)"
+    fi
+  fi
+
+  case "$TARGET_RUNTIME" in
+    podman)
+      if ! command -v podman >/dev/null 2>&1; then
+        log "Installing Podman runtime"
+        if command -v dnf >/dev/null 2>&1; then
+          dnf install -y podman
+        elif command -v apt-get >/dev/null 2>&1; then
+          apt-get install -y podman
+        else
+          fail "Podman is not installed"
+        fi
+      fi
+      if command -v apt-get >/dev/null 2>&1; then
+        apt-get install -y uidmap dbus-user-session
+      fi
+      runtime_compose_works podman || fail "Podman is installed but 'podman compose' is unavailable; install a Compose provider"
+      ;;
+    docker)
+      command -v docker >/dev/null 2>&1 || fail "--runtime docker requested, but Docker is not installed"
+      runtime_compose_works docker || fail "Docker is installed but 'docker compose' is unavailable; install the Docker Compose plugin"
+      ;;
+    *) fail "internal error: unresolved target runtime" ;;
+  esac
+
+  log "Target container runtime: $TARGET_RUNTIME"
 }
 
 find_python() {
@@ -236,21 +328,39 @@ start_user_manager() {
 }
 
 setup_target() {
-  log "Configuring target host with rootless Podman"
+  log "Configuring target host with $TARGET_RUNTIME"
   ensure_user "$MANAGEMENT_USER" /bin/bash "/home/$MANAGEMENT_USER"
   install -d -o "$MANAGEMENT_USER" -g "$MANAGEMENT_USER" -m 0700 "/home/$MANAGEMENT_USER/.ssh"
   install -d -o "$MANAGEMENT_USER" -g "$MANAGEMENT_USER" -m 0755 /srv/botman/stacks
 
-  ensure_subid_range "$MANAGEMENT_USER" /etc/subuid uid
-  ensure_subid_range "$MANAGEMENT_USER" /etc/subgid gid
-  start_user_manager "$MANAGEMENT_USER"
-
-  local uid runtime
+  local uid runtime compose_command
   uid=$(id -u "$MANAGEMENT_USER")
   runtime="/run/user/$uid"
-  runuser -u "$MANAGEMENT_USER" -- env XDG_RUNTIME_DIR="$runtime" podman info --format '{{.Host.Security.Rootless}}' | grep -qx true \
-    || fail "Podman is not operating rootlessly for $MANAGEMENT_USER"
-  runuser -u "$MANAGEMENT_USER" -- env XDG_RUNTIME_DIR="$runtime" podman compose version
+
+  if [[ "$TARGET_RUNTIME" == "podman" ]]; then
+    ensure_subid_range "$MANAGEMENT_USER" /etc/subuid uid
+    ensure_subid_range "$MANAGEMENT_USER" /etc/subgid gid
+    start_user_manager "$MANAGEMENT_USER"
+    runuser -u "$MANAGEMENT_USER" -- env XDG_RUNTIME_DIR="$runtime" podman info --format '{{.Host.Security.Rootless}}' | grep -qx true \
+      || fail "Podman is not operating rootlessly for $MANAGEMENT_USER"
+    runuser -u "$MANAGEMENT_USER" -- env XDG_RUNTIME_DIR="$runtime" podman compose version
+    compose_command="podman compose"
+  else
+    local docker_group
+    if ! docker info >/dev/null 2>&1 && systemctl list-unit-files docker.service >/dev/null 2>&1; then
+      systemctl enable --now docker.service
+    fi
+    docker info >/dev/null 2>&1 || fail "Docker daemon is not reachable; start/configure Docker and rerun setup"
+    docker_group=$(stat -c '%G' /var/run/docker.sock 2>/dev/null || true)
+    [[ -n "$docker_group" ]] || fail "Docker socket /var/run/docker.sock was not created"
+    [[ "$docker_group" != "root" ]] || fail "Docker socket is group-owned by root; configure a dedicated Docker socket group before granting $MANAGEMENT_USER access"
+    getent group "$docker_group" >/dev/null 2>&1 || fail "Docker socket group '$docker_group' does not exist"
+    usermod -aG "$docker_group" "$MANAGEMENT_USER"
+    runuser -u "$MANAGEMENT_USER" -- docker info >/dev/null \
+      || fail "$MANAGEMENT_USER cannot access the Docker daemon; check /var/run/docker.sock permissions/group and Docker service status"
+    runuser -u "$MANAGEMENT_USER" -- docker compose version
+    compose_command="docker compose"
+  fi
 
   log "Configuring persistent journald"
   install -d -m 0755 /etc/systemd/journald.conf.d
@@ -299,14 +409,24 @@ EOF2
   fi
 
   log "Running target preflight"
-  runuser -u "$MANAGEMENT_USER" -- env XDG_RUNTIME_DIR="$runtime" \
-    "$AGENT_VENV/bin/botman-target-preflight" \
-    --management-user "$MANAGEMENT_USER" \
-    --compose-command "podman compose" \
-    --journal-max-use "$JOURNAL_MAX_USE" || true
+  if [[ "$TARGET_RUNTIME" == "podman" ]]; then
+    runuser -u "$MANAGEMENT_USER" -- env XDG_RUNTIME_DIR="$runtime" \
+      "$AGENT_VENV/bin/botman-target-preflight" \
+      --management-user "$MANAGEMENT_USER" \
+      --compose-command "$compose_command" \
+      --journal-max-use "$JOURNAL_MAX_USE" || true
+  else
+    runuser -u "$MANAGEMENT_USER" -- \
+      "$AGENT_VENV/bin/botman-target-preflight" \
+      --management-user "$MANAGEMENT_USER" \
+      --compose-command "$compose_command" \
+      --journal-max-use "$JOURNAL_MAX_USE" || true
+  fi
 }
 
+detect_existing_runtime
 install_os_packages
+ensure_target_runtime
 PYTHON=$(find_python) || fail "Python 3.11+ is required; install it and rerun (or set PYTHON_BIN=/path/to/python)"
 log "Using Python: $PYTHON ($($PYTHON --version 2>&1))"
 
@@ -335,5 +455,6 @@ if has_central; then
   echo "Central: edit /etc/botman/env, configure SSH/Git known_hosts, then start/restart botman.service."
 fi
 if has_target; then
+  echo "Target runtime: $TARGET_RUNTIME (configure compose_argv as: $TARGET_RUNTIME compose)"
   echo "Target: authorize the central SSH key for $MANAGEMENT_USER, register the server in Discord, then run /config agent sync."
 fi

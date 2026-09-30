@@ -177,3 +177,10 @@ The log-agent is intentionally a fresh implementation; no `journalctl` subproces
 - `/env` now exposes concrete runtime Discord annotation types when commands are registered.
 - Added regression coverage for slash-command annotation resolution.
 
+
+## 2026-09-30 - Target runtime auto-detection
+
+- `scripts/setup.sh` now detects an existing usable `docker compose` or `podman compose` before attempting runtime installation.
+- Existing Docker targets are configured by granting `botmgr` access to the Docker socket group and use `docker compose`; Podman targets retain the rootless user-manager/socket setup.
+- Added `--runtime auto|docker|podman`; ambiguous hosts with both runtimes require an explicit choice.
+- Target prerequisite installation no longer unconditionally requests the `podman` package, avoiding failures on Docker-only distributions where no Podman package exists.

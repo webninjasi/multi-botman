@@ -7,12 +7,12 @@
 - No production deployment exists; backward compatibility is not required.
 - Archived code under `reference/original-ag-botman/` is reference-only.
 - Fresh implementation is active.
-- Current automated suite: **171 passed**.
+- Current automated suite: **174 passed**.
 - Phase 1 is complete.
 - Phase 2 central Compose/lifecycle/Discord core is complete at unit level.
 - Phase 3 central Git + `/update` deployment core and Discord adapter are complete at unit level.
 - Phase 4 live log-agent core/runtime is implemented and unit-tested with fake journal/HTTP adapters.
-- Phase 5 central live-log control is implemented; repeatable rootless-Podman target provisioning now exists in `scripts/setup.sh`, with manual alternatives documented.
+- Phase 5 central live-log control is implemented; repeatable Docker/Podman-aware target provisioning now exists in `scripts/setup.sh`, with manual alternatives documented.
 - Phase 6 historical exporter plus `/logs tail|download` is implemented and unit-tested.
 - Phase 7 env/config onboarding, including conservative server/stack/app edit UX, is implemented.
 - Phase 8 packaging/docs are in progress; central/agent units, clean-checkout CI, wheel-content verification, target-host preflight, and Ruff/mypy CI gates exist. The quality tools could not be installed in this offline build, so their first actual run plus real-host acceptance remain.
@@ -103,3 +103,7 @@ Production installation is now standardized on `/opt/botman` as the Git checkout
 
 The stack-authorized `/env` module no longer uses postponed annotations for nested slash callbacks. This prevents discord.py from raising `NameError: name 'discord' is not defined` while resolving `discord.Interaction` / `discord.Attachment` during bot startup. Regression coverage asserts those annotations are concrete runtime types.
 
+
+### 2026-09-30 target runtime setup correction
+
+`setup.sh --mode target` is now runtime-aware. It checks an existing `docker compose` / `podman compose` first instead of blindly installing Podman. Docker targets add `botmgr` to the Docker socket's owning group and skip all Podman linger/user-socket setup. Podman remains rootless. Use `--runtime docker|podman` when both are installed. A target registered through Discord must use the matching `compose_argv` (`docker compose` or `podman compose`).

@@ -51,7 +51,7 @@ Updated 2026-09-30 for the fresh Botman implementation.
 - `tests/central/`
 - `tests/agent/`
 
-Current fresh result: **170 passed**.
+Current fresh result: **174 passed**.
 
 ## Operator/design documentation
 
@@ -80,5 +80,5 @@ Original archived upload SHA-256:
 
 `1a794f09455b87d598fa6d8e2ef024d68444674a9d76d2575998a94588b20c8d`
 
-- `scripts/setup.sh` — repeatable central/target/all host bootstrap for the canonical Git + external-venv layout.
+- `scripts/setup.sh` — repeatable central/target/all host bootstrap with existing Docker/Podman Compose detection and runtime-specific target setup.
 - `scripts/update.sh` — fast-forward Git update, reinstall, systemd unit refresh, and configured-service restart.

@@ -4,9 +4,9 @@ This is the operator runbook for installing Botman and getting an application to
 
 ## What is runnable now
 
-As of 2026-09-30, the central Discord bot, lifecycle commands, admin onboarding commands, Compose upload/validation, Git deploy-key setup, env management, `/update`, `/livelogs start|stop`, and `/logs tail|download` are implemented and unit-tested. The target `botman-log-agent`, `botman-log-export`, and systemd unit are included. A repeatable rootless-Podman setup script is included; the manual steps remain documented for auditing and nonstandard runtimes. Stack-scoped config/Git/env mutations serialize with lifecycle/deployment operations; queued runtime work reloads config after taking that lock, and agent sync serializes with live-log state changes.
+As of 2026-09-30, the central Discord bot, lifecycle commands, admin onboarding commands, Compose upload/validation, Git deploy-key setup, env management, `/update`, `/livelogs start|stop`, and `/logs tail|download` are implemented and unit-tested. The target `botman-log-agent`, `botman-log-export`, and systemd unit are included. A repeatable Docker/Podman-aware setup script is included; the manual steps remain documented for auditing and nonstandard runtimes. Stack-scoped config/Git/env mutations serialize with lifecycle/deployment operations; queued runtime work reloads config after taking that lock, and agent sync serializes with live-log state changes.
 
-Current automated result: **170 tests passed**. Real VPS Docker/Podman/cysystemd and Discord test-guild acceptance are still required before calling v1 production-complete.
+Current automated result: **174 tests passed**. Real VPS Docker/Podman/cysystemd and Discord test-guild acceptance are still required before calling v1 production-complete.
 
 Do not deploy anything under `reference/`.
 
@@ -25,7 +25,7 @@ The supported installation layout is:
 /srv/botman/stacks/          managed stacks
 ```
 
-After cloning the repository, a central VPS that is also a rootless-Podman target can perform the repeatable host bootstrap with:
+After cloning the repository, a central VPS that is also a target can perform the repeatable host bootstrap with:
 
 ```bash
 sudo /opt/botman/scripts/setup.sh --mode all
@@ -37,7 +37,16 @@ A target-only VPS can use:
 sudo /opt/botman/scripts/setup.sh --mode target
 ```
 
-The target setup configures `botmgr` for rootless Podman, enables linger, starts the real `user@UID.service`, enables the per-user `podman.socket`, configures persistent journald, creates the log-agent account/state permissions, installs the agent venv, installs the unit, and writes the restricted sudoers rule. This includes the user-manager/socket setup required when `sudo -iu botmgr systemctl --user ...` would otherwise fail with `Failed to connect to bus`.
+Target setup first checks for an already-usable Compose runtime. If only `docker compose` works, Docker is selected; if only `podman compose` works, Podman is selected. If both work, setup stops and requires an explicit choice:
+
+```bash
+sudo /opt/botman/scripts/setup.sh --mode target --runtime docker
+sudo /opt/botman/scripts/setup.sh --mode target --runtime podman
+```
+
+For Docker, setup keeps the existing system Docker daemon and adds `botmgr` to the group that owns `/var/run/docker.sock`; configure that Botman server with `compose_argv: docker compose`. Docker-group access is effectively root-equivalent. For Podman, setup configures `botmgr` rootlessly, enables linger, starts the real `user@UID.service`, and enables the per-user `podman.socket`; configure `compose_argv: podman compose`. This includes the user-manager/socket setup required when `sudo -iu botmgr systemctl --user ...` would otherwise fail with `Failed to connect to bus`.
+
+The generic prerequisite install does not unconditionally request a container runtime. If neither usable Docker Compose nor Podman Compose is installed, setup only attempts Podman when the distribution advertises a Podman package; otherwise it exits with instructions to install a runtime explicitly.
 
 The script intentionally leaves trust and secrets to the operator: `/etc/botman/env`, central -> target authorized keys/host verification, and Git-provider host verification/deploy keys still require explicit setup.
 
@@ -197,6 +206,14 @@ There is no privilege-free way to grant arbitrary container lifecycle control:
 - Docker-group membership is convenient but effectively root-equivalent.
 - `sudo docker ...` / `sudo podman ...` is explicit but still highly privileged.
 - Rootless Podman reduces host privilege but must be integration-tested with the journald logging design.
+
+When using the automated setup, `--runtime auto` is the default. On an existing Docker host, this means the command is simply:
+
+```bash
+sudo /opt/botman/scripts/setup.sh --mode target
+```
+
+and the Discord server entry must use `compose_argv: docker compose`. You may force the choice with `--runtime docker`.
 
 Configure `compose_argv` to match the exact non-interactive command that works as `botmgr`, for example `docker compose`, `podman compose`, or `sudo podman compose`.
 
