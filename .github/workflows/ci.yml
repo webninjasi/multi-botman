@@ -11,8 +11,8 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -30,8 +30,8 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -42,7 +42,7 @@ jobs:
       - name: Compile
         run: python -m compileall -q src scripts
       - name: Build wheel
-        run: python -m pip wheel . --no-deps --no-build-isolation -w dist
+        run: python -m pip wheel . --no-deps -w dist
       - name: Verify wheel
         shell: bash
         run: python scripts/verify_wheel.py dist/*.whl

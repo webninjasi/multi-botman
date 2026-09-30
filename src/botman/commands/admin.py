@@ -143,8 +143,9 @@ def register_admin_commands(
             if len(detail) > 1500:
                 detail = detail[:1500] + "\n… truncated …"
             status = "passed" if result.ok else f"failed with exit {result.returncode}"
+            detail = detail.replace("```", "``\u200b`")
             await interaction.followup.send(
-                f"Server `{name}` test {status}.\n```text\n{detail.replace('```', '``\u200b`')}\n```",
+                f"Server `{name}` test {status}.\n```text\n{detail}\n```",
                 ephemeral=True,
             )
         except Exception as exc:
@@ -364,9 +365,10 @@ def register_admin_commands(
             detail = (result.stdout or result.stderr or "(no output)").strip()
             if len(detail) > 1600:
                 detail = detail[:1600] + "\n… truncated …"
+            detail = detail.replace("```", "``\u200b`")
             await interaction.followup.send(
                 f"Agent status on `{server}` (exit {result.returncode}):\n"
-                f"```text\n{detail.replace('```', '``\u200b`')}\n```",
+                f"```text\n{detail}\n```",
                 ephemeral=True,
             )
         except Exception as exc:
