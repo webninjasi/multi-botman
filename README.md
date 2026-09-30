@@ -25,7 +25,7 @@ Implemented and covered by the current automated suite:
 - clean-checkout CI for Python 3.11-3.13, Ruff/mypy quality gates, and wheel-content/entry-point verification
 - target-host preflight CLI for Compose, journald policy/permissions, cysystemd, systemd unit/sudoers, and optional app export checks
 
-The automated suite currently passes **174 tests**.
+The automated suite currently passes **176 tests**.
 
 Still required before calling v1 production-complete:
 
@@ -65,7 +65,7 @@ For a target-only VPS:
 sudo /opt/botman/scripts/setup.sh --mode target
 ```
 
-Target setup auto-detects an already-working `docker compose` or `podman compose`. Existing Docker is kept and `botmgr` is granted access to that daemon; existing Podman is configured rootlessly with its persistent user socket. If both runtimes are usable, select one explicitly with `--runtime docker` or `--runtime podman`. The script never installs Podman merely because target mode was requested.
+Target setup detects an already-installed Docker or Podman runtime before choosing anything to install. Existing Docker is kept; if its Compose v2 plugin is missing, setup tries the distribution's `docker-compose-plugin` or `docker-compose-v2` package and then grants `botmgr` access to the daemon. Existing Podman is configured rootlessly with its persistent user socket. If both runtimes are usable, select one explicitly with `--runtime docker` or `--runtime podman`. The script creates `botmgr` before runtime/plugin configuration, so a recoverable runtime failure does not leave the management identity missing.
 
 The setup script is idempotent for the supported layout. It installs host prerequisites, users/directories, external venvs, systemd units, persistent journald policy, and the restricted agent-control sudoers rule. It deliberately does **not** invent Discord secrets, SSH trust, or Git deploy keys.
 

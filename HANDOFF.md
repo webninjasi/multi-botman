@@ -7,7 +7,7 @@
 - No production deployment exists; backward compatibility is not required.
 - Archived code under `reference/original-ag-botman/` is reference-only.
 - Fresh implementation is active.
-- Current automated suite: **174 passed**.
+- Current automated suite: **176 passed**.
 - Phase 1 is complete.
 - Phase 2 central Compose/lifecycle/Discord core is complete at unit level.
 - Phase 3 central Git + `/update` deployment core and Discord adapter are complete at unit level.
@@ -107,3 +107,7 @@ The stack-authorized `/env` module no longer uses postponed annotations for nest
 ### 2026-09-30 target runtime setup correction
 
 `setup.sh --mode target` is now runtime-aware. It checks an existing `docker compose` / `podman compose` first instead of blindly installing Podman. Docker targets add `botmgr` to the Docker socket's owning group and skip all Podman linger/user-socket setup. Podman remains rootless. Use `--runtime docker|podman` when both are installed. A target registered through Discord must use the matching `compose_argv` (`docker compose` or `podman compose`).
+
+### 2026-09-30 Docker target bootstrap follow-up
+
+An existing Docker installation no longer fails auto-detection merely because `docker compose` is missing. `setup.sh` selects Docker, attempts a Compose v2 package (`docker-compose-plugin` or `docker-compose-v2`), and only then verifies `docker compose`. The target `botmgr` account is created before runtime/plugin setup so partial setup failures are recoverable by simply rerunning the script.

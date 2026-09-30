@@ -184,3 +184,10 @@ The log-agent is intentionally a fresh implementation; no `journalctl` subproces
 - Existing Docker targets are configured by granting `botmgr` access to the Docker socket group and use `docker compose`; Podman targets retain the rootless user-manager/socket setup.
 - Added `--runtime auto|docker|podman`; ambiguous hosts with both runtimes require an explicit choice.
 - Target prerequisite installation no longer unconditionally requests the `podman` package, avoiding failures on Docker-only distributions where no Podman package exists.
+
+## 2026-09-30 - Docker Compose bootstrap correction
+
+- Target setup now treats an existing Docker CLI/engine as the selected runtime even when the Compose v2 plugin is missing.
+- On apt/dnf hosts, setup tries `docker-compose-plugin` and `docker-compose-v2` from configured repositories before failing with an actionable message.
+- `botmgr` is created before target runtime/plugin setup, so an install failure can be fixed and setup rerun without leaving the management identity absent.
+- Added regression coverage for Docker-without-Compose detection and setup ordering.

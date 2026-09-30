@@ -37,16 +37,16 @@ A target-only VPS can use:
 sudo /opt/botman/scripts/setup.sh --mode target
 ```
 
-Target setup first checks for an already-usable Compose runtime. If only `docker compose` works, Docker is selected; if only `podman compose` works, Podman is selected. If both work, setup stops and requires an explicit choice:
+Target setup first checks which container runtime is already installed. If Docker is present but `docker compose` is missing, Docker is still selected and setup attempts to install a Compose v2 plugin from the configured package repositories (`docker-compose-plugin` first, then `docker-compose-v2`). If Podman is present, it is retained. If both Compose runtimes work, setup stops and requires an explicit choice:
 
 ```bash
 sudo /opt/botman/scripts/setup.sh --mode target --runtime docker
 sudo /opt/botman/scripts/setup.sh --mode target --runtime podman
 ```
 
-For Docker, setup keeps the existing system Docker daemon and adds `botmgr` to the group that owns `/var/run/docker.sock`; configure that Botman server with `compose_argv: docker compose`. Docker-group access is effectively root-equivalent. For Podman, setup configures `botmgr` rootlessly, enables linger, starts the real `user@UID.service`, and enables the per-user `podman.socket`; configure `compose_argv: podman compose`. This includes the user-manager/socket setup required when `sudo -iu botmgr systemctl --user ...` would otherwise fail with `Failed to connect to bus`.
+For Docker, setup keeps the existing system Docker daemon, installs Compose v2 when a suitable package is available, and adds `botmgr` to the group that owns `/var/run/docker.sock`; configure that Botman server with `compose_argv: docker compose`. Docker-group access is effectively root-equivalent. For Podman, setup configures `botmgr` rootlessly, enables linger, starts the real `user@UID.service`, and enables the per-user `podman.socket`; configure `compose_argv: podman compose`. This includes the user-manager/socket setup required when `sudo -iu botmgr systemctl --user ...` would otherwise fail with `Failed to connect to bus`. `botmgr` is created before runtime/plugin configuration so setup can be safely rerun after a package/repository problem.
 
-The generic prerequisite install does not unconditionally request a container runtime. If neither usable Docker Compose nor Podman Compose is installed, setup only attempts Podman when the distribution advertises a Podman package; otherwise it exits with instructions to install a runtime explicitly.
+The generic prerequisite install does not unconditionally request a container runtime. An installed Docker CLI is enough for auto-detection even when Compose v2 is initially absent; setup then tries to add Compose without replacing Docker. If neither Docker nor Podman is installed, setup only attempts Podman when the distribution advertises a Podman package; otherwise it exits with instructions to install a runtime explicitly.
 
 The script intentionally leaves trust and secrets to the operator: `/etc/botman/env`, central -> target authorized keys/host verification, and Git-provider host verification/deploy keys still require explicit setup.
 

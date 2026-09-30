@@ -87,15 +87,14 @@ detect_existing_runtime() {
   has_target || return 0
 
   if [[ "$RUNTIME" != "auto" ]]; then
-    if command -v "$RUNTIME" >/dev/null 2>&1; then
-      TARGET_RUNTIME="$RUNTIME"
-      return 0
-    fi
     TARGET_RUNTIME="$RUNTIME"
     return 0
   fi
 
+  local docker_installed=false podman_installed=false
   local docker_ok=false podman_ok=false
+  command -v docker >/dev/null 2>&1 && docker_installed=true
+  command -v podman >/dev/null 2>&1 && podman_installed=true
   runtime_compose_works docker && docker_ok=true
   runtime_compose_works podman && podman_ok=true
 
@@ -105,10 +104,14 @@ detect_existing_runtime() {
     TARGET_RUNTIME="docker"
   elif $podman_ok; then
     TARGET_RUNTIME="podman"
-  elif command -v docker >/dev/null 2>&1; then
-    fail "Docker is installed but 'docker compose' is unavailable; install the Docker Compose plugin or choose --runtime podman"
-  elif command -v podman >/dev/null 2>&1; then
-    fail "Podman is installed but 'podman compose' is unavailable; install a Compose provider before rerunning setup"
+  elif $docker_installed && ! $podman_installed; then
+    # Keep an existing Docker installation even when only the Compose plugin is
+    # missing. ensure_target_runtime() will install/verify Compose v2.
+    TARGET_RUNTIME="docker"
+  elif $podman_installed && ! $docker_installed; then
+    TARGET_RUNTIME="podman"
+  elif $docker_installed && $podman_installed; then
+    fail "Docker and Podman are both installed but neither has a usable Compose command; rerun with --runtime docker or --runtime podman"
   fi
 }
 
@@ -131,6 +134,31 @@ install_os_packages() {
   else
     fail "unsupported package manager; install Git, OpenSSH, sudo, Python 3.11+, and libsystemd development headers manually"
   fi
+}
+
+install_docker_compose_plugin() {
+  runtime_compose_works docker && return 0
+  log "Docker is installed but Compose v2 is missing; installing a Compose plugin"
+
+  if command -v apt-get >/dev/null 2>&1; then
+    local package
+    for package in docker-compose-plugin docker-compose-v2; do
+      if apt-cache show "$package" >/dev/null 2>&1; then
+        apt-get install -y "$package"
+        runtime_compose_works docker && return 0
+      fi
+    done
+  elif command -v dnf >/dev/null 2>&1; then
+    local package
+    for package in docker-compose-plugin docker-compose-v2; do
+      if dnf -q list --available "$package" >/dev/null 2>&1 || dnf -q list --installed "$package" >/dev/null 2>&1; then
+        dnf install -y "$package"
+        runtime_compose_works docker && return 0
+      fi
+    done
+  fi
+
+  fail "Docker is installed but 'docker compose' is unavailable and no Compose v2 package was found in the configured repositories. Install Docker's Compose plugin for this distribution, then rerun setup"
 }
 
 ensure_target_runtime() {
@@ -168,7 +196,8 @@ ensure_target_runtime() {
       ;;
     docker)
       command -v docker >/dev/null 2>&1 || fail "--runtime docker requested, but Docker is not installed"
-      runtime_compose_works docker || fail "Docker is installed but 'docker compose' is unavailable; install the Docker Compose plugin"
+      install_docker_compose_plugin
+      runtime_compose_works docker || fail "Docker Compose v2 is still unavailable after plugin installation"
       ;;
     *) fail "internal error: unresolved target runtime" ;;
   esac
@@ -424,8 +453,15 @@ EOF2
   fi
 }
 
-detect_existing_runtime
 install_os_packages
+
+# Create target identity before runtime setup so a recoverable runtime/plugin
+# failure never leaves the host without the management account.
+if has_target; then
+  ensure_user "$MANAGEMENT_USER" /bin/bash "/home/$MANAGEMENT_USER"
+fi
+
+detect_existing_runtime
 ensure_target_runtime
 PYTHON=$(find_python) || fail "Python 3.11+ is required; install it and rerun (or set PYTHON_BIN=/path/to/python)"
 log "Using Python: $PYTHON ($($PYTHON --version 2>&1))"
