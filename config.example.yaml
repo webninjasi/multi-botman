@@ -1,0 +1,35 @@
+settings:
+  timezone: Europe/Istanbul
+  command_prefix: '!'
+  journal_max_use: 1G
+  live_resume_max_age_sec: 300
+  release_keep_count: 3
+
+servers:
+  vps1:
+    type: ssh
+    host: vps1.example.com
+    port: 22
+    user: botmgr
+    key: /home/botman/.ssh/server-vps1
+    known_hosts: /home/botman/.ssh/known_hosts
+    compose_argv: [docker, compose]
+
+stacks:
+  bots:
+    server: vps1
+    channel_id: '123456789012345678'
+    project_name: botman-bots
+    compose_file: compose.yml
+
+apps:
+  app-a:
+    stack: bots
+    service: app-a
+    log_identifier: botman-bots-app-a
+    git:
+      repo_url: git@github.com:owner/app-a.git
+      branch: main
+      deploy_key_path: /home/botman/.ssh/deploy-app-a
+    log:
+      live_enabled: false

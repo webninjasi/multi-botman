@@ -1,0 +1,224 @@
+# Target Architecture
+
+## Overview
+
+```text
+                                  Discord
+                                     │
+                       ┌─────────────┴─────────────┐
+                       │      Central Botman       │
+                       │                           │
+                       │ discord.py                │
+                       │ config + authorization    │
+                       │ Git repo cache            │
+                       │ release builder           │
+                       │ asyncssh/SFTP             │
+                       └─────────────┬─────────────┘
+                                     │ transient SSH/SFTP
+                    ┌────────────────┼────────────────┐
+                    ▼                ▼                ▼
+                  VPS A            VPS B            VPS C
+                    │                │                │
+            Compose stacks     Compose stacks    Compose stacks
+                    │                │                │
+             container logs     container logs    container logs
+                    │                │                │
+                 journald          journald         journald
+                    │                │                │
+            botman-log-agent botman-log-agent  botman-log-agent
+                    │                │                │
+                    └──── Discord incoming webhooks ──┘
+```
+
+The logging daemon is **not** the management agent. It only reads local journald and sends enabled live streams to Discord.
+
+## Domain model
+
+### Server
+
+A physical/virtual Linux host managed locally or through SSH.
+
+Owns:
+
+- execution transport (`local` or `ssh`)
+- SSH host/user/key metadata for remote servers
+- Compose command argv/runtime settings
+- zero or more stacks
+- one Botman logging daemon installation
+
+### Stack
+
+A shared Compose project and Discord management surface.
+
+A stack owns:
+
+- one server
+- one stable Compose project name
+- one command channel ID (authorization/routing boundary)
+- one Compose file stored on the target VPS
+- zero or more app services
+
+Multiple apps in a stack may share networks and named volumes.
+
+### App
+
+One managed Compose service with its own source repository.
+
+An app owns:
+
+- stack reference
+- Compose service name
+- Git repo URL + branch
+- central deploy-key path
+- release/source directory beneath the stack
+- `.env` path beneath the stack shared area
+- stable `SYSLOG_IDENTIFIER`
+- Discord log webhook metadata
+- persistent live-log enabled/thread/subscription state
+
+## Target filesystem layout on each VPS
+
+```text
+/srv/botman/stacks/<stack>/
+├── compose.yml
+├── env/
+│   ├── app-a.env
+│   └── app-b.env
+└── apps/
+    ├── app-a/
+    │   ├── current -> releases/<commit-sha>
+    │   └── releases/
+    │       ├── <commit-sha>/
+    │       └── <older-sha>/
+    └── app-b/
+        ├── current -> releases/<commit-sha>
+        └── releases/
+
+/etc/botman-agent/
+└── config.yaml             # 0600/0640, contains only logging config/secrets
+
+/var/lib/botman-agent/
+└── state.json              # live subscription cursor/timestamp state
+
+/opt/botman-agent/
+└── venv/ + installed agent package
+```
+
+Persistent app data must not be stored inside `apps/<app>/releases/*`.
+
+## Target filesystem layout on central VPS
+
+```text
+/var/lib/botman/
+├── repos/
+│   └── <app>.git/          # central mirror/cache
+├── releases/               # temporary generated archives/transcripts
+└── state/                  # if runtime state is separated from YAML later
+
+/etc/botman/
+├── config.yaml             # 0600
+├── git_known_hosts         # Git provider host verification
+└── env                     # central service secrets, 0600
+
+/home/<botman-user>/.ssh/
+├── server-*                # central -> VPS keys
+└── deploy-*                # per-app Git deploy private keys
+```
+
+Exact base paths may be constants/global config, not per-app arbitrary input.
+
+## Management data flow
+
+### Lifecycle operation
+
+```text
+Discord /restart app-a
+       │
+       ▼
+resolve app -> stack -> command channel authorization
+       │
+       ▼
+per-stack operation lock
+       │
+       ▼
+local/SSH compose command for only app-a service
+       │
+       ▼
+concise command output in stack command channel
+```
+
+### Deployment
+
+```text
+/update app-a
+    │
+    ├─ create deployment thread in command channel
+    ├─ fetch app-a repo on central
+    ├─ resolve branch -> commit
+    ├─ read target current commit via SSH
+    ├─ if identical: no-op
+    ├─ git archive commit on central
+    ├─ checksum + SFTP archive
+    ├─ extract to staged release on target
+    ├─ atomically point `current` to staged release
+    ├─ compose build app-a (old container still running)
+    ├─ on build failure: restore old `current`
+    ├─ on build success: compose up -d --no-deps app-a
+    ├─ if activation fails: attempt rollback and report loudly
+    ├─ retain recent releases; delete old ones
+    └─ attach complete deployment transcript
+```
+
+Use a stable Compose project name (`-p <stack-project>`) so release directory names never change Compose identity.
+
+## Logging data flow
+
+```text
+container stdout/stderr
+        │
+ journald logging driver
+        │  SYSLOG_IDENTIFIER=botman-<stack>-<app>
+        ▼
+ system journal (persistent, capped 1 GiB total)
+        │
+ cysystemd AsyncJournalReader
+        │
+ line-aware Discord formatter
+        │
+ incoming webhook + thread_id
+        ▼
+ persistent live-log Discord thread
+```
+
+There is no central SSH stream for live logs.
+
+## Historical export data flow
+
+```text
+/logs download app-a from to format
+        │
+        ▼
+central SSH executes botman-log-export on target
+        │
+        ▼
+cysystemd reader seeks requested realtime timestamp
+filters SYSLOG_IDENTIFIER
+writes human/jsonl gzip parts
+        │
+        ▼
+central SFTP downloads parts
+remote temp cleanup
+        │
+        ▼
+Discord attachments in command channel
+```
+
+The daemon is not involved in exports.
+
+## Concurrency model
+
+- One central config mutation lock.
+- One operation lock per stack to serialize Compose mutations (`start/stop/restart/update`) and avoid project-level races.
+- Git fetch/archive work can occur before acquiring the remote Compose portion of the stack lock if later optimization is needed; v1 may keep the whole update serialized for simplicity.
+- Logging daemon: one task per **enabled live app**, no producer queue and no unbounded buffer.
+- A live task blocks on delivery/retry before advancing the journal reader further; journald remains the durable backlog.
