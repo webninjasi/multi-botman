@@ -174,3 +174,10 @@ async def test_mutation_lock_prevents_stale_last_writer_race(tmp_path: Path) -> 
     await asyncio.gather(add_server("one", 0.03), add_server("two", 0.0))
     loaded = store.load()
     assert set(loaded.servers) == {"one", "two"}
+
+
+def test_git_repo_url_must_use_ssh() -> None:
+    raw = valid_config_dict()
+    raw["apps"]["app-a"]["git"]["repo_url"] = "https://github.com/owner/app-a.git"
+    with pytest.raises(ValueError, match="must use SSH"):
+        BotmanConfig.model_validate(raw)

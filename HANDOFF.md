@@ -1,67 +1,86 @@
 # HANDOFF — Botman Fresh Start
 
-> Keep this file concise and current. Detailed rationale belongs in the linked docs. Update this file whenever architecture, restrictions, current phase, or next TODOs change.
+> Keep this file concise/current. Detailed rationale belongs in the linked docs.
 
 ## Current status
 
-- No production deployment exists. Backward compatibility is **not required**.
-- The old `py/` implementation is archived under `reference/original-ag-botman/` and is reference-only.
-- Fresh architecture is agreed; implementation has started.
-- Phase 1 is complete and the fresh test suite passes. Phase 2 core Compose/locking/validation work is in progress.
-- The archived test suite reported **11 passed / 2 errors**; see `reference/REVIEW_FINDINGS.md`. Do not treat those tests as acceptance tests for the fresh implementation.
+- No production deployment exists; backward compatibility is not required.
+- Archived code under `reference/original-ag-botman/` is reference-only.
+- Fresh implementation is active.
+- Current automated suite: **113 passed**.
+- Phase 1 is complete.
+- Phase 2 central Compose/lifecycle/Discord core is complete at unit level.
+- Phase 3 central Git + `/update` deployment core and Discord adapter are complete at unit level.
+- Phase 4 live log-agent core/runtime is implemented and unit-tested with fake journal/HTTP adapters.
+- Phase 5 central live-log control is implemented; one-time target agent OS/package provisioning remains manual and documented.
+- Phase 6 historical exporter plus `/logs tail|download` is implemented and unit-tested.
+- Phase 7 env/config onboarding was pulled forward and is largely implemented.
+- Phase 8 systemd packaging/docs are in progress; central and agent units exist.
+
+Real Docker, Podman, cysystemd/journald, and Discord test-guild acceptance have not yet been run in this build environment.
 
 ## Product goal
 
-One central Discord bot manages Docker/Podman Compose applications across small local/remote VPSes using transient SSH/SFTP. One tiny per-VPS daemon handles **live journald -> Discord log delivery only**. No management web ports, no persistent SSH log streams, no DB/Redis/Loki/Grafana/Portainer-class infrastructure.
+One central Discord bot manages Docker/Podman Compose applications across small local/remote VPSes using transient SSH/SFTP. One tiny per-VPS daemon handles **live journald -> Discord log delivery only**. Historical reads use a short-lived helper from the same target package. No management web ports, persistent SSH log streams, database, Redis, Loki/Grafana, or comparable control-plane infrastructure.
 
 ## Non-negotiable decisions
 
-Read `DECISIONS.md` for detail. In short:
+Read `DECISIONS.md` for full detail. Key constraints:
 
-- Central bot is the only management/control plane.
-- Remote management uses transient SSH/SFTP with strict host verification.
-- Lifecycle commands remain available as hybrid slash/prefix commands where practical; admin/secret commands remain slash-only/ephemeral.
-- Discord command channel is the authorization/routing boundary for apps in that stack. Do not add a second app ACL system.
-- Model a **stack** separately from an **app**: one stack = one server + one command channel + one Compose project/file; multiple apps can share it.
-- Compose YAML is managed/uploaded through Botman, not stored in each app repo.
-- Each app has its own Git repo and central-VPS SSH deploy key.
-- Only the central VPS talks to Git. Target VPSes never need GitHub/GitLab credentials or Git host configuration.
-- `/update` is the only deployment trigger in v1. Future push-triggered deployment stays TODO and must use webhook identity + HMAC signature, never a plaintext shared secret in Discord.
-- Deployment uses source archives + staged release directories + atomic `current` symlink switching; no persistent data in code/release directories. Named volumes are acceptable.
-- The log daemon uses **cysystemd 2.x `AsyncJournalReader`**, never a spawned `journalctl` process.
-- App logs are identified by a stable per-app `SYSLOG_IDENTIFIER` produced by Compose journald `tag` configuration.
-- Live logs stay enabled until explicit `/livelogs stop`.
-- `/livelogs start` is idempotent and also repairs/replaces an unusable thread.
-- Live log delivery may skip long outage gaps; `/logs download` is the recovery path. Avoid flooding Discord after a long agent/thread outage.
-- Live Discord formatting preserves order, splits multi-line entries at line boundaries, and only truncates a logical line when that single line itself cannot fit.
-- Historical export returns original journald content and supports human `.log.gz` and structured `.jsonl.gz`.
-- Default display timezone is `Europe/Istanbul`; internal timestamps are UTC.
-- Journald retention target is persistent storage capped at **1 GiB per VPS** until external archival exists.
-- No `.env` modal editor. Keep show/upload/set/unset; all secret-bearing responses are ephemeral. `.env` writes use restrictive permissions.
-- Config/env changes never implicitly deploy/rebuild applications. Agent config may be restarted when logging configuration changes; hot reload is out of scope for v1.
-- `/update` creates a deployment thread under the stack's command channel, streams concise progress there, and attaches the complete transcript at the end.
+- Remote management is transient SSH/SFTP with strict host verification.
+- Stack command channel is the lifecycle/log/update authorization boundary.
+- Stack and app are distinct: one stack has one server/channel/Compose project; multiple independently versioned apps may share it.
+- Compose is Botman-managed, not app-repo-owned.
+- Git credentials stay on central; each app gets a separate central deploy key.
+- `/update` is v1's only deployment trigger.
+- Deployment uses exact Git SHA -> archive -> checksum -> staged release -> atomic `current` -> service-only build/up with rollback attempt.
+- Live log reading uses cysystemd 2.x `AsyncJournalReader`, not `journalctl` or container CLI streams.
+- Live logging has no unbounded producer queue; delivery backpressure stops that app from reading ahead.
+- Cursor advances only after all Discord segments representing the journal entry are acknowledged.
+- New/long-gap live sessions tail instead of flooding missed history; historical `/logs download` is the recovery path.
+- Env/config changes do not implicitly restart/deploy apps.
+- Admin/secret workflows are slash-only and ephemeral; lifecycle/update/log UX remains hybrid where useful.
+
+## Implemented central commands
+
+Hybrid slash/prefix:
+
+- `/start APP` / `!start APP`
+- `/stop APP` / `!stop APP`
+- `/restart APP` / `!restart APP`
+- `/status APP` / `!status APP`
+- `/update APP` / `!update APP`
+- `/livelogs start|stop APP` / prefix equivalents
+- `/logs tail APP [lines]` / prefix equivalent
+- `/logs download APP from_time to_time [human|jsonl]` / prefix equivalent
+
+Slash/admin/ephemeral:
+
+- `/config server add|test`
+- `/config stack add`
+- `/config app add`
+- `/config compose upload|show`
+- `/config git setup|rotate-key`
+- `/config agent sync|status`
+- `/env show|upload|set|unset`
+
+See `VPS_AND_DISCORD_SETUP.md` for the exact onboarding order.
 
 ## Immediate next work
 
-Continue Phase 2 in `IMPLEMENTATION_PLAN.md`:
+1. Run actual Linux/cysystemd integration for the live reader and historical exporter, including retained-history and journal-permission checks.
+2. Run real Docker and Podman Compose deployment/lifecycle/failure acceptance.
+3. Run a Discord test-guild acceptance pass for hybrid command registration, threads, webhooks, upload limits, and archived/locked thread behavior.
+4. Decide whether to automate target agent provisioning after real-host package/systemd behavior is verified; the manual runbook is the supported bootstrap today.
+5. Add config edit UX still missing from the broader admin command design where needed.
+6. Reconcile runtime-specific findings before v1 completion.
 
-1. Wire `LifecycleService` into discord.py hybrid `/start`, `/stop`, `/restart`, and `/status` adapters; both slash and prefix paths must call the same authorization boundary.
-2. Implement admin Compose upload/show transport with safe SFTP/local atomic writes and runtime `compose config` validation.
-3. Add Discord output/transcript helpers needed by lifecycle/deployment commands.
-4. Finish Phase 2 acceptance tests, including actual Discord adapter routing tests.
-5. Only after Phase 2 passes, begin Phase 3 central Git cache and `/update`.
-
-Current fresh suite: **36 passed**. See `VPS_AND_DISCORD_SETUP.md` for the operator bootstrap and planned Discord onboarding sequence.
-
-Do **not** repair or reuse the archived `py/agent/log_agent.py` or `deployment.py` as the implementation baseline.
+Do **not** repair or reuse archived `py/agent/log_agent.py` or deployment code as the implementation baseline.
 
 ## Handoff maintenance rules
 
-- Update `HANDOFF.md` after every completed phase or material decision.
-- Put rationale/long explanations in the detailed docs and link them here.
-- Record completed architectural pivots in `HISTORY.md`.
-- Record new/deferred work in `ROADMAP.md`; do not silently scope-creep v1.
-- Keep `DECISIONS.md` authoritative for user-approved choices.
-- Never copy old behavior just for compatibility; this project is not deployed.
-- Do not mark a phase complete until its acceptance tests in `TEST_PLAN.md` pass.
-- When implementation disagrees with docs, stop and reconcile the docs/decision before proceeding.
+- Update this file after each completed phase/material decision.
+- Keep `DECISIONS.md` authoritative for approved choices.
+- Put detailed rationale in subsystem docs.
+- Record deferred work in `ROADMAP.md`.
+- Do not call v1 complete until `TEST_PLAN.md` real integration/failure drills pass.

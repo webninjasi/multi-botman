@@ -15,6 +15,11 @@ dependencies = [
   "PyYAML>=6.0,<7",
 ]
 
+[project.scripts]
+botman = "botman.bot:main"
+botman-log-agent = "botman_agent.main:main"
+botman-log-export = "botman_agent.export:main"
+
 [project.optional-dependencies]
 agent = [
   "aiohttp>=3.9,<4",

@@ -186,7 +186,7 @@ Proposed interface:
 
 ```text
 botman-log-export \
-  --config /etc/botman-agent/config.yaml \
+  --config /var/lib/botman-log-agent/config.yaml \
   --app app-a \
   --since-utc 2026-09-29T07:00:00Z \
   --until-utc 2026-09-29T09:00:00Z \

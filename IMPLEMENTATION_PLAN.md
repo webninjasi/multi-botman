@@ -77,7 +77,7 @@ Names can change; separation of responsibilities should not.
 
 Do not proceed until this phase passes.
 
-## Phase 2 — Stack-aware Compose and command authorization — IN PROGRESS
+## Phase 2 — Stack-aware Compose and command authorization — UNIT COMPLETE
 
 ### Implement
 
@@ -107,7 +107,7 @@ Do not proceed until this phase passes.
 - command argv exactness for Docker/Podman configured forms
 - malicious service/stack names rejected or safely represented
 
-## Phase 3 — Central Git cache and `/update`
+## Phase 3 — Central Git cache and `/update` — UNIT COMPLETE
 
 ### Implement
 
@@ -146,7 +146,7 @@ Use temp local fake targets first, then real Compose integration:
 - concurrent update/start serialized
 - transcript produced on success/failure
 
-## Phase 4 — Fresh log-agent package with cysystemd
+## Phase 4 — Fresh log-agent package with cysystemd — CORE/UNIT COMPLETE
 
 ### Implement agent config
 
@@ -199,7 +199,7 @@ See agent section in `TEST_PLAN.md`, especially:
 - fatal thread error suspends without hot loop
 - short restart resume vs long-gap tail
 
-## Phase 5 — `/livelogs` control and agent provisioning
+## Phase 5 — `/livelogs` control and agent provisioning — CONTROL COMPLETE / PROVISIONING MANUAL
 
 ### Provisioning
 
@@ -238,7 +238,7 @@ Provisioning must fail if a critical command fails; no “warning but success”
 - stop disables
 - agent config contains correct server-local apps only
 
-## Phase 6 — Historical `/logs` and exporter CLI
+## Phase 6 — Historical `/logs` and exporter CLI — UNIT COMPLETE
 
 ### Implement `botman-log-export`
 
@@ -269,7 +269,7 @@ Provisioning must fail if a critical command fails; no “warning but success”
 - attachment part splitting
 - cleanup after success and failure
 
-## Phase 7 — Admin env/config UX
+## Phase 7 — Admin env/config UX — PARTIALLY PULLED FORWARD
 
 ### Env
 
@@ -297,7 +297,7 @@ Important workflow tests:
 9. `/livelogs start`
 10. `/logs tail` + `/logs download`
 
-## Phase 8 — Systemd, packaging, docs, manual acceptance
+## Phase 8 — Systemd, packaging, docs, manual acceptance — IN PROGRESS
 
 - central dedicated-user unit + protected environment file
 - agent dedicated-user unit + venv executable

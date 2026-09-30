@@ -1,46 +1,48 @@
 # Botman
 
-Botman is a Discord-managed control plane for Docker/Podman Compose applications across small local/remote VPSes. The central bot performs management and deployment over transient SSH/SFTP; a separate tiny per-VPS daemon will handle live journald -> Discord log delivery only.
+Botman is a Discord-managed control plane for Docker/Podman Compose applications across small local or remote VPSes. The central bot owns management/deployment and talks to targets through transient SSH/SFTP. A separate tiny per-VPS agent reads journald directly for live Discord logs and provides a short-lived historical export helper.
 
 ## Current implementation status
 
-Fresh implementation started on 2026-09-30. The archived prototype under `reference/` is reference-only and must not be deployed or patched forward as the production implementation.
+Fresh implementation started on 2026-09-30. The archived prototype under `reference/` is reference-only and must not be deployed or patched forward.
 
-Implemented now:
+Implemented and covered by the current automated suite:
 
-- strict Pydantic configuration models for settings, servers, stacks, apps, Git, and live-log state
-- unknown-key/reference/name/path/timezone validation
-- atomic YAML persistence with `0600` permissions and serialized async mutation
-- app -> stack -> server resolution and command-channel authorization
-- argv-safe local subprocess execution with timeout and line streaming
-- transient AsyncSSH executor design with strict host verification, public-key-only auth, SFTP helpers, and checked privileged writes
-- stack-scoped Compose argv construction with stable project/file identity
-- per-stack operation locking
-- service-scoped start/stop/restart/status/build/up core
-- Compose YAML size/syntax/service/build-context/journald-tag validation
+- strict Pydantic configuration and atomic `0600` persistence
+- app -> stack -> server routing and command-channel authorization
+- argv-safe local and strictly host-verified SSH/SFTP execution
+- stack-scoped Compose identity, per-stack locks, service-only lifecycle operations
+- hybrid Discord `/start|stop|restart|status` + prefix equivalents
+- slash-only admin onboarding for servers, stacks, apps, Compose, Git keys, agent sync/status, and env files
+- runtime `compose config` validation before atomic Compose activation
+- central Git-over-SSH cache with strict host verification and per-app deploy keys
+- `/update` + `!update` release staging, checksum verification, atomic `current`, rollback, pruning, deployment thread, and complete transcript attachments
+- target `botman-log-agent`: cysystemd 2.x direct async journal reading, bounded/backpressured webhook delivery, line-aware Discord formatting, atomic checkpoints, restart/gap policy, and per-app supervision
+- persistent `/livelogs start|stop` with webhook/thread repair, server-scoped synchronization, and rollback on target-agent restart failure
+- `botman-log-export` plus `/logs tail|download` for retained journald history in human or JSONL gzip parts
+- central and agent systemd unit files
 
-The automated fresh-start suite currently passes **36 tests**.
+The automated suite currently passes **113 tests**.
 
-Not implemented yet:
+Still required before calling v1 production-complete:
 
-- Discord bot entrypoint/cogs and actual slash/prefix registration
-- Compose upload transport/runtime `compose config` validation
-- Git cache and `/update` deployment engine
-- cysystemd log agent, live log controls, and historical exporter
-- admin env/config command adapters
-- systemd packaging/production deployment
+- automated target log-agent provisioning (manual provisioning is documented and usable now)
+- real Linux/cysystemd+journald acceptance
+- real Docker and Podman integration/failure drills on VPSes
+- end-to-end Discord test-guild acceptance
 
 ## Operator setup
 
-Read [`VPS_AND_DISCORD_SETUP.md`](VPS_AND_DISCORD_SETUP.md) for:
+Read [`VPS_AND_DISCORD_SETUP.md`](VPS_AND_DISCORD_SETUP.md). It distinguishes:
 
-- central VPS preparation
-- every target VPS preparation
-- SSH host-key verification and key placement
-- container runtime privilege tradeoffs
-- journald preparation
-- required Compose layout/logging tags
-- the exact planned Discord command sequence for onboarding and operating an app
+- central VPS setup
+- remote target VPS setup
+- the special case where the central VPS is also a local target
+- SSH and Git host-key trust
+- Docker/Podman privilege choices
+- Compose/journald requirements
+- the runnable Discord onboarding/deployment command sequence
+- manual one-time target log-agent installation, followed by Discord-controlled live/historical logging
 
 A model configuration example is in [`config.example.yaml`](config.example.yaml).
 
@@ -51,14 +53,16 @@ Python 3.11+ is required.
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-pip install -e '.[dev]'
+pip install -e '.[dev,agent]'
 pytest -q
 ```
 
-The logging-agent extra will later be installable with:
+Executables:
 
 ```bash
-pip install -e '.[agent]'
+botman
+botman-log-agent
+botman-log-export --help
 ```
 
 ## Documentation read order

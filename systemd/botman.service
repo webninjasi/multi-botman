@@ -1,0 +1,25 @@
+[Unit]
+Description=Botman Discord control plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=botman
+Group=botman
+WorkingDirectory=/opt/botman
+EnvironmentFile=/etc/botman/env
+ExecStart=/opt/botman/.venv/bin/botman
+Restart=on-failure
+RestartSec=5s
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/etc/botman /var/lib/botman -/srv/botman -/var/lib/botman-log-agent
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

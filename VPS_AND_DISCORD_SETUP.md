@@ -1,45 +1,48 @@
 # VPS and Discord Setup Guide
 
-This is the operator runbook for preparing Botman hosts and onboarding an app.
+This is the operator runbook for installing Botman and getting an application to the point where `/update APP` can deploy it.
 
-## Implementation status
+## What is runnable now
 
-As of 2026-09-30:
+As of 2026-09-30, the central Discord bot, lifecycle commands, admin onboarding commands, Compose upload/validation, Git deploy-key setup, env management, `/update`, `/livelogs start|stop`, and `/logs tail|download` are implemented and unit-tested. The target `botman-log-agent`, `botman-log-export`, and systemd unit are included. Target OS/package provisioning remains a one-time manual step documented below.
 
-- Phase 1 is implemented and tested: configuration models/persistence, routing authorization, local/SSH execution, SFTP primitives.
-- Phase 2 core is in progress: Compose argv construction, stack locking, lifecycle service core, and Compose YAML validation are implemented and tested.
-- The Discord bot entrypoint/admin command adapters, deployment engine, and log agent are **not yet runnable**. Commands below describe the agreed v1 operator workflow and are the interface the remaining phases will implement.
+Current automated result: **113 tests passed**. Real VPS Docker/Podman/cysystemd and Discord test-guild acceptance are still required before calling v1 production-complete.
 
-Do not deploy the archived code under `reference/`.
+Do not deploy anything under `reference/`.
 
-## Roles
+## 1. Host roles
 
 ### Central VPS
 
-Runs the Discord bot and is the only machine which talks to Git providers. It holds:
+Runs `botman`. It is the only machine which talks to Git providers and stores:
 
 - `DISCORD_TOKEN`
 - `/etc/botman/config.yaml`
-- central -> target VPS SSH private keys
+- central -> target SSH private keys
 - per-app Git deploy private keys
 - Git-provider `known_hosts`
-- Git mirrors/cache and generated release archives
+- central bare Git caches and temporary release archives
 
-If the central VPS also hosts applications, prepare it as both **central** and **target**.
+### Remote target VPS
 
-### Target VPS
+Runs Docker/Podman Compose stacks. It receives release archives by SFTP and does **not** need app Git credentials. Use a dedicated `botmgr` account for Botman management.
 
-Runs one or more Docker/Podman Compose stacks. It receives source release archives from the central VPS over SFTP. It does **not** need GitHub/GitLab credentials.
+### Central VPS also hosting apps
 
-Each target eventually also runs the small `botman-log-agent`, which only reads journald and posts enabled live logs to Discord.
+Two safe patterns exist:
 
-## 1. Discord setup
+1. **Local target:** configure the server as `type: local`. In this case the central `botman` service account itself must own/write `/srv/botman/stacks` and must be able to execute the configured Compose runtime.
+2. **Loopback SSH separation:** configure the machine as an SSH target (for example `botmgr@127.0.0.1`) and prepare it exactly like any other remote target.
 
-Create a Discord application/bot in the Discord Developer Portal. Invite it to the server with the `bot` and `applications.commands` OAuth scopes.
+Do not create `/srv/botman/stacks` owned only by `botmgr` and then configure `type: local`; the local executor runs as `botman`.
 
-Because v1 keeps prefix commands such as `!status app-a`, enable the **Message Content Intent** for the bot.
+## 2. Discord application setup
 
-Grant the bot, in the Botman command channels, the permissions needed for:
+Create a Discord application/bot and invite it with the `bot` and `applications.commands` OAuth scopes.
+
+Enable **Message Content Intent** because Botman currently supports prefix lifecycle/update commands in addition to slash commands.
+
+In each Botman command channel, grant the bot at least:
 
 - View Channel
 - Send Messages
@@ -48,16 +51,16 @@ Grant the bot, in the Botman command channels, the permissions needed for:
 - Create Public Threads
 - Send Messages in Threads
 - Manage Threads
-- Manage Webhooks
+- Manage Webhooks (required for `/livelogs start`)
 - Use Application Commands
 
-Restrict the command channel itself with normal Discord channel permissions. Botman treats the configured stack command channel as the application-management authorization boundary.
+The configured stack command channel is a management authorization boundary, not just organization. `/start`, `/stop`, `/restart`, `/status`, and `/update` reject the app from other channels.
 
-Record your own Discord user ID for `ADMIN_IDS`. Multiple admin IDs are comma-separated; whitespace is ignored.
+Record the Discord user IDs which may run admin commands. They go in `ADMIN_IDS` as comma-separated numeric IDs.
 
-## 2. Central VPS bootstrap
+## 3. Install the central VPS
 
-The examples below assume Debian/Ubuntu. Adjust package names for another distribution.
+Debian/Ubuntu example:
 
 ```bash
 sudo apt update
@@ -68,29 +71,28 @@ sudo apt install -y \
 sudo useradd --create-home --shell /bin/bash botman || true
 sudo install -d -o botman -g botman -m 0700 /home/botman/.ssh
 sudo install -d -o botman -g botman -m 0700 /var/lib/botman
+sudo install -d -o botman -g botman -m 0700 /var/lib/botman/repos
+sudo install -d -o botman -g botman -m 0700 /var/lib/botman/keys
 sudo install -d -o botman -g botman -m 0700 /etc/botman
+sudo install -d -o botman -g botman -m 0755 /opt/botman
 ```
 
-Copy this repository to a stable location such as `/opt/botman` and create a virtual environment:
+Copy the **fresh repository root** into `/opt/botman`, then install it:
 
 ```bash
-sudo install -d -o botman -g botman -m 0755 /opt/botman
-# copy/rsync repository contents into /opt/botman first
 sudo -u botman python3 -m venv /opt/botman/.venv
 sudo -u botman /opt/botman/.venv/bin/pip install --upgrade pip
 sudo -u botman /opt/botman/.venv/bin/pip install /opt/botman
 ```
 
-The central service entrypoint/systemd unit is intentionally deferred until the bot command layer exists. Do not use the archived service unit as a production substitute.
-
-Create the protected central environment file now if desired:
+Create the protected environment file:
 
 ```bash
 sudo install -o botman -g botman -m 0600 /dev/null /etc/botman/env
 sudoedit /etc/botman/env
 ```
 
-Planned contents:
+Contents:
 
 ```text
 DISCORD_TOKEN=replace-with-bot-token
@@ -98,9 +100,73 @@ ADMIN_IDS=123456789012345678,234567890123456789
 BOTMAN_CONFIG=/etc/botman/config.yaml
 ```
 
-## 3. Generate one central -> target SSH key per VPS
+A config file does **not** have to exist on first start. Botman can start from validated defaults and `/config server add` creates the first persisted config. If `/etc/botman/config.yaml` exists but is invalid, startup fails rather than silently ignoring it.
 
-On the central VPS, as the `botman` user:
+Install the supplied service:
+
+```bash
+sudo cp /opt/botman/systemd/botman.service /etc/systemd/system/botman.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now botman.service
+sudo systemctl status botman.service
+journalctl -u botman.service -n 100 --no-pager
+```
+
+The supplied unit allows Botman to write `/etc/botman`, `/var/lib/botman`, and `/srv/botman`. If the central host will never be a local target, removing `/srv/botman` from `ReadWritePaths=` is a reasonable hardening step.
+
+## 4. Prepare each remote target VPS
+
+Install OpenSSH and exactly one Compose runtime which you intend Botman to use.
+
+Docker example:
+
+```bash
+docker version
+docker compose version
+```
+
+Podman examples:
+
+```bash
+podman --version
+podman compose version
+```
+
+or, if your design is rootful:
+
+```bash
+sudo podman compose version
+```
+
+Create the management account and stack root:
+
+```bash
+sudo useradd --create-home --shell /bin/bash botmgr || true
+sudo install -d -o botmgr -g botmgr -m 0700 /home/botmgr/.ssh
+sudo install -d -o botmgr -g botmgr -m 0755 /srv/botman/stacks
+```
+
+### Container-runtime privilege choice
+
+There is no privilege-free way to grant arbitrary container lifecycle control:
+
+- Docker-group membership is convenient but effectively root-equivalent.
+- `sudo docker ...` / `sudo podman ...` is explicit but still highly privileged.
+- Rootless Podman reduces host privilege but must be integration-tested with the journald logging design.
+
+Configure `compose_argv` to match the exact non-interactive command that works as `botmgr`, for example `docker compose`, `podman compose`, or `sudo podman compose`.
+
+If `sudo` is used, verify it is non-interactive:
+
+```bash
+sudo -u botmgr sudo -n podman compose version
+```
+
+Botman cannot answer a password prompt.
+
+## 5. Central -> target SSH key and host verification
+
+Generate one keypair per target on the central VPS:
 
 ```bash
 sudo -u botman ssh-keygen \
@@ -110,104 +176,29 @@ sudo -u botman ssh-keygen \
   -C 'botman central -> vps1'
 ```
 
-Repeat with a different filename for every target VPS.
-
-Do not copy application Git deploy keys to target VPSes.
-
-## 4. Prepare every target VPS
-
-Install SSH plus exactly one supported container/Compose runtime.
-
-### Docker example
-
-Install Docker Engine and the Compose plugin using your distribution/vendor procedure, then verify:
+Append `/home/botman/.ssh/server-vps1.pub` to `/home/botmgr/.ssh/authorized_keys` on that target and enforce ownership/mode:
 
 ```bash
-docker version
-docker compose version
-```
-
-### Podman example
-
-Install Podman and a Compose provider, then verify the exact command you plan to configure, for example:
-
-```bash
-podman --version
-podman compose version
-```
-
-or, if using rootful Podman:
-
-```bash
-sudo podman compose version
-```
-
-### Management account
-
-Create a dedicated account:
-
-```bash
-sudo useradd --create-home --shell /bin/bash botmgr || true
-sudo install -d -o botmgr -g botmgr -m 0700 /home/botmgr/.ssh
-sudo install -d -o botmgr -g botmgr -m 0755 /srv/botman/stacks
-```
-
-Append the corresponding central public key to the target:
-
-```bash
-sudoedit /home/botmgr/.ssh/authorized_keys
-sudo chown botmgr:botmgr /home/botmgr/.ssh/authorized_keys
+sudo chown -R botmgr:botmgr /home/botmgr/.ssh
+sudo chmod 0700 /home/botmgr/.ssh
 sudo chmod 0600 /home/botmgr/.ssh/authorized_keys
 ```
 
-### Runtime privilege choice
-
-Choose deliberately:
-
-- **Docker group:** convenient, but membership in the Docker group is effectively root-equivalent on that VPS.
-- **`sudo podman` / `sudo docker`:** also gives the management path substantial privilege; command-path restrictions do not make arbitrary container control non-privileged.
-- **Rootless Podman:** reduces host privilege, but must be integration-tested with the chosen journald/logging setup before treating it as the default.
-
-Botman should still use a dedicated account even where the container runtime itself is highly privileged.
-
-Configure `compose_argv` to match what actually works as `botmgr`; examples:
-
-```yaml
-compose_argv: [docker, compose]
-```
-
-```yaml
-compose_argv: [sudo, podman, compose]
-```
-
-If `sudo` is required, give `botmgr` only the non-interactive privileges needed by the selected runtime and later Botman provisioning. Verify with:
-
-```bash
-sudo -u botmgr sudo -n podman compose version
-```
-
-(or the Docker equivalent). Botman cannot answer an interactive sudo password prompt.
-
-## 5. Verify SSH host identity from the central VPS
-
-Botman requires strict host-key verification. Never solve SSH errors with `StrictHostKeyChecking=no`.
-
-Obtain the target's SSH host-key fingerprint through an independent source such as the VPS provider console or direct console access. You can collect candidate public keys with:
+Botman deliberately uses strict SSH host verification. Obtain the target host-key fingerprint through an independent provider/console channel. You can collect candidates with:
 
 ```bash
 ssh-keyscan -p 22 vps1.example.com > /tmp/vps1.keys
 ssh-keygen -lf /tmp/vps1.keys
 ```
 
-Compare the displayed fingerprint out-of-band. Only after it matches, install the key into the central `botman` account's trusted hosts file:
+After independently verifying the fingerprint, append the key to Botman's trusted file:
 
 ```bash
 sudo -u botman sh -c 'cat /tmp/vps1.keys >> /home/botman/.ssh/known_hosts'
-sudo chown botman:botman /home/botman/.ssh/known_hosts
 sudo chmod 0600 /home/botman/.ssh/known_hosts
 ```
 
-Then test the exact key/account:
+Verify the actual Botman identity:
 
 ```bash
 sudo -u botman ssh \
@@ -215,70 +206,49 @@ sudo -u botman ssh \
   botmgr@vps1.example.com true
 ```
 
-Repeat for every target.
+Never work around a mismatch using `StrictHostKeyChecking=no`.
 
-## 6. Prepare Git-provider host verification on the central VPS
+## 6. Prepare Git-provider trust on central only
 
-Only the central VPS talks to GitHub/GitLab/etc.
-
-Create a separate trusted-hosts file if you want Git trust isolated from VPS trust:
+Create a separate trust file:
 
 ```bash
 sudo install -o botman -g botman -m 0600 /dev/null /etc/botman/git_known_hosts
 ```
 
-Populate it using host keys whose fingerprints you verify against the Git provider's official published fingerprints. Do not automatically trust raw `ssh-keyscan` output and do not hard-code provider keys into Botman source.
+Populate it only after checking the provider's SSH host-key fingerprint against the provider's official documentation. Target VPSes do not receive this file and do not receive per-app Git private keys.
 
-Each app will later get a separate **read-only** Git deploy key from `/config git setup` or `/config git rotate-key`.
+## 7. If the central VPS is a `local` target
 
-## 7. Journald preparation on every target
-
-Phase 5 will automate and verify this, but a target can be prepared manually now.
+Prepare `/srv/botman/stacks` for the **botman** account, not `botmgr`:
 
 ```bash
-sudo mkdir -p /etc/systemd/journald.conf.d
-sudo tee /etc/systemd/journald.conf.d/90-botman.conf >/dev/null <<'EOF2'
-[Journal]
-Storage=persistent
-SystemMaxUse=1G
-EOF2
-sudo systemctl restart systemd-journald
-journalctl --disk-usage
+sudo install -d -o botman -g botman -m 0755 /srv/botman/stacks
 ```
 
-Create the future log-agent account and journal permission:
+Then make the chosen runtime work non-interactively as `botman`, restart `botman.service` so its systemd sandbox picks up the newly created writable path, and use `/config server add server_type:local ...`:
 
 ```bash
-sudo useradd \
-  --system \
-  --home-dir /var/lib/botman-agent \
-  --create-home \
-  --shell /usr/sbin/nologin \
-  botman-log || true
-sudo usermod -aG systemd-journal botman-log
-sudo install -d -o root -g botman-log -m 0750 /etc/botman-agent
-sudo install -d -o botman-log -g botman-log -m 0750 /var/lib/botman-agent
+sudo systemctl restart botman.service
 ```
 
-The actual `botman-log-agent` package/service is not implemented yet; Phase 5 will install and test it.
+If you do not want the Discord service account to have local container privileges, use the loopback-SSH pattern instead.
 
-## 8. Compose file requirements for a managed app
+## 8. Compose requirements
 
-Compose belongs to the **stack**, not to the app Git repository.
-
-For an app named `app-a` in stack `bots`, Botman expects source at:
+Compose belongs to the **stack**, not the app Git repository. For app `app-a` in stack `bots`, source is activated at:
 
 ```text
 /srv/botman/stacks/bots/apps/app-a/current
 ```
 
-and the default env file at:
+The default env path is:
 
 ```text
 /srv/botman/stacks/bots/env/app-a.env
 ```
 
-A minimal managed service should look like:
+Example service:
 
 ```yaml
 services:
@@ -294,83 +264,97 @@ services:
         tag: botman-bots-app-a
 ```
 
-`logging.options.tag` must match the app's configured `log_identifier` exactly. Put persistent data in named volumes or explicit shared paths outside `apps/<app>/releases/`; never put persistent state inside a release directory.
+For every Botman-managed app, Compose upload checks that:
 
-Multiple independently versioned app services may share this same Compose file, network, and named volumes.
+- the configured service exists
+- the build context points at that app's standard `current` release path
+- the logging driver is journald
+- the journald tag exactly matches the app's `log_identifier`
+- the target runtime accepts `compose config`
 
-## 9. Discord command sequence to onboard an app
+Persistent application data belongs in named volumes/shared paths outside release directories.
 
-These are the agreed v1 commands. Admin/config/env commands are slash-only and ephemeral. Lifecycle commands are hybrid slash/prefix where practical.
+## 9. Runnable Discord onboarding sequence
 
-### One-time server setup
+Admin/config/env commands are slash-only and ephemeral. Run `/config stack add` in the channel which should control the stack.
+
+### Once per target VPS
 
 ```text
 /config server add
 /config server test
 ```
 
-For an SSH server, provide the server name, host, port, user, central SSH key path, optional explicit `known_hosts` path, and Compose argv.
+For SSH, fill in:
 
-When the log-agent implementation lands:
+- `name`
+- `server_type: ssh`
+- `host`
+- `port`
+- `user: botmgr`
+- `key: /home/botman/.ssh/server-vps1`
+- `known_hosts: /home/botman/.ssh/known_hosts` (recommended explicit path)
+- `compose_argv: docker compose` (or your tested equivalent)
 
-```text
-/config agent provision
-/config agent status
-```
+For a central/local target use `server_type: local` and the Compose command which works as `botman`.
 
-Run provisioning for every VPS which hosts managed apps, including the central VPS if it is also an app host.
+### Once per stack
 
-### One-time stack setup
-
-Run stack creation **inside the Discord channel which should control that stack**:
+In the desired control channel:
 
 ```text
 /config stack add
 ```
 
-Provide the stack name, server, and stable Compose project name. The current channel becomes the stack command channel.
+Provide the stack name and server. `project_name` is optional; Botman derives a stable name if omitted.
 
-Upload the shared Compose file:
+### Add the app **before uploading Compose**
+
+```text
+/config app add
+```
+
+Provide:
+
+- app name
+- stack name
+- exact Compose service name
+- SSH Git URL (`git@host:owner/repo.git` or `ssh://...`)
+- branch
+- optional explicit journald `log_identifier`
+
+Adding the app first is important: Compose validation can then verify that app's service/build context/journald tag.
+
+### Upload the shared stack Compose file
 
 ```text
 /config compose upload
 /config compose show
 ```
 
-A Compose upload changes configuration only; it does not restart or deploy apps.
+`/config compose upload` stages the file, validates it statically, runs the target's configured `compose config`, and atomically replaces the stack Compose file only on success. It does **not** deploy/restart applications.
 
-### Add an app
+If you previously uploaded Compose before adding all managed apps, upload it again after app creation so those services are validated.
 
-```text
-/config app add
-```
-
-Provide at minimum:
-
-- app name
-- stack
-- Compose service name
-- Git repo SSH URL
-- branch
-- stable journald `log_identifier`
-
-Then create the app-specific Git deploy key:
+### Generate the app Git deploy key
 
 ```text
 /config git setup
 ```
 
-Botman will show the **public** key ephemerally. Add that public key to the app repository as a read-only deploy key. The private key stays only on the central VPS.
+Botman returns the public Ed25519 key ephemerally. Add **that public key only** to the repository as a read-only deploy key. The private key remains under `/var/lib/botman/keys` on central.
 
-Use this later to replace the key:
+Key rotation later:
 
 ```text
 /config git rotate-key
 ```
 
-### Configure environment
+Replace the repository's old public deploy key before the next update.
 
-Choose one or more:
+### Configure `.env`
+
+Use any combination:
 
 ```text
 /env upload APP
@@ -379,11 +363,9 @@ Choose one or more:
 /env show APP
 ```
 
-Environment changes never automatically deploy or restart the app.
+Env writes are atomic and mode `0600`. They never trigger a restart/deploy.
 
 ### First deployment
-
-After the Compose service, Git deploy key, and env are ready:
 
 ```text
 /update APP
@@ -395,11 +377,24 @@ or:
 !update APP
 ```
 
-`/update` is the only deployment trigger in v1. It will create a deployment thread, fetch/resolve the app repo on the central VPS, transfer a source archive, build only that service, activate it, and attach the full transcript.
+The update path:
+
+1. verifies this is the app's command channel
+2. fetches the configured branch over strict Git SSH on central
+3. resolves the exact commit SHA
+4. no-ops if that SHA is already active
+5. creates/checksums an archive on central
+6. uploads and verifies it on target
+7. stages a release and atomically moves `current`
+8. builds only the app's Compose service
+9. runs `up -d --no-deps` only for that service
+10. restores/rolls back on build/activation failure where possible
+11. retains the configured number of older releases
+12. streams progress into a Discord thread and attaches the complete transcript
 
 ### Normal lifecycle
 
-From the stack's configured command channel only:
+Only from the stack's configured command channel:
 
 ```text
 /start APP
@@ -417,79 +412,232 @@ Prefix equivalents:
 !status APP
 ```
 
-Typing a known app name from another channel is intentionally rejected.
+## 10. Target journald/log-agent setup
 
-### Live and historical logs
+Deployment works without the log agent, but `/livelogs` and `/logs` require this one-time setup on **every target VPS whose apps should have Discord/journald log access**.
 
-Enable/repair live logs:
+### 10.1 Configure persistent journald
+
+Botman historical downloads read the retained system journal. On each target:
+
+```bash
+sudo mkdir -p /etc/systemd/journald.conf.d
+sudo tee /etc/systemd/journald.conf.d/90-botman.conf >/dev/null <<'EOF2'
+[Journal]
+Storage=persistent
+SystemMaxUse=1G
+Compress=yes
+EOF2
+sudo systemctl restart systemd-journald
+journalctl --disk-usage
+```
+
+`SystemMaxUse=1G` is a **global VPS journal cap**, not a per-app retention guarantee. If you change `settings.journal_max_use`, keep the host policy aligned manually until provisioning is automated. Review any existing administrator-managed journald policy before installing this drop-in.
+
+### 10.2 Create the agent account and protected config directory
+
+For a normal remote target managed as `botmgr`:
+
+```bash
+sudo useradd \
+  --system \
+  --home-dir /var/lib/botman-log-agent \
+  --create-home \
+  --shell /usr/sbin/nologin \
+  botman-log-agent || true
+
+sudo usermod -aG systemd-journal botman-log-agent
+sudo usermod -aG botman-log-agent,systemd-journal botmgr
+sudo chown root:botman-log-agent /var/lib/botman-log-agent
+sudo chmod 3770 /var/lib/botman-log-agent
+sudo install -d -o botman-log-agent -g botman-log-agent -m 0700 /var/lib/botman-log-agent/state
+sudo install -d -o root -g root -m 0755 /opt/botman-agent
+```
+
+Why `botmgr` gets both groups:
+
+- `botman-log-agent`: lets central atomically replace `/var/lib/botman-log-agent/config.yaml` without broad sudo file-copy permissions;
+- `systemd-journal`: lets the short-lived `botman-log-export` helper read retained logs without running the exporter as root.
+
+The management identity already has container lifecycle authority, so treat it as a privileged operational account. New transient SSH sessions pick up the added groups automatically. Verify:
+
+```bash
+id botmgr
+```
+
+For a **central VPS configured as a local target**, run the same setup but add `botman` instead of `botmgr`:
+
+```bash
+sudo usermod -aG botman-log-agent,systemd-journal botman
+sudo systemctl restart botman.service
+id botman
+```
+
+Restarting `botman.service` is required after changing the local service account's supplementary groups. The supplied central systemd unit already permits writes to `/var/lib/botman-log-agent` when that path exists.
+
+### 10.3 Install the agent/exporter package
+
+Copy the same fresh repository/package to `/opt/botman-agent`. On Debian/Ubuntu:
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip build-essential libsystemd-dev
+sudo python3 -m venv /opt/botman-agent/.venv
+sudo /opt/botman-agent/.venv/bin/pip install --upgrade pip
+sudo /opt/botman-agent/.venv/bin/pip install '/opt/botman-agent[agent]'
+
+/opt/botman-agent/.venv/bin/botman-log-agent --help || true
+/opt/botman-agent/.venv/bin/botman-log-export --help
+```
+
+`cysystemd` links against systemd; package names differ outside Debian/Ubuntu. Do not substitute a spawned `journalctl` wrapper for the exporter/agent.
+
+Install and enable the supplied agent unit, but do not start it manually before central has written its config:
+
+```bash
+sudo cp /opt/botman-agent/systemd/botman-log-agent.service \
+  /etc/systemd/system/botman-log-agent.service
+sudo systemctl daemon-reload
+sudo systemctl enable botman-log-agent.service
+```
+
+The generated config path is:
+
+```text
+/var/lib/botman-log-agent/config.yaml
+```
+
+and per-app checkpoint files are kept under `/var/lib/botman-log-agent/state/` with agent-only `0700`/`0600` permissions. The parent directory is setgid+sticky so the management identity can atomically replace its own config file without gaining read access to checkpoint files.
+
+### 10.4 Allow only the required systemd control commands
+
+Central uses non-interactive `sudo -n` only to restart/query the log-agent service. Find the real systemctl path:
+
+```bash
+command -v systemctl
+```
+
+Then create `/etc/sudoers.d/botman-log-agent-control` with `visudo -f`. On a typical Debian/Ubuntu host where systemctl is `/usr/bin/systemctl`, a remote target uses:
+
+```sudoers
+botmgr ALL=(root) NOPASSWD: /usr/bin/systemctl restart botman-log-agent.service, /usr/bin/systemctl is-active botman-log-agent.service, /usr/bin/systemctl status --no-pager --lines=20 botman-log-agent.service
+```
+
+For a central/local target, replace `botmgr` with `botman`. If `command -v systemctl` returns a different path, use that exact path in sudoers.
+
+Validate that sudo is non-interactive. An inactive service may return a nonzero status, which is fine; there must be no password prompt:
+
+```bash
+sudo -u botmgr sudo -n systemctl is-active botman-log-agent.service || true
+```
+
+Use `sudo -u botman ...` for a local target.
+
+### 10.5 Generate/sync target agent config from Discord
+
+After at least the server/stack/app config exists in Botman:
+
+```text
+/config agent sync
+/config agent status
+```
+
+Choose the target server in each command. `sync` writes the complete server-local agent config, restarts `botman-log-agent.service`, and verifies it is active. At this point apps are present in agent config but live delivery remains disabled until explicitly started.
+
+On the target, useful checks are:
+
+```bash
+sudo systemctl status botman-log-agent.service --no-pager
+sudo journalctl -u botman-log-agent.service -n 100 --no-pager
+sudo -u botmgr /opt/botman-agent/.venv/bin/botman-log-export \
+  --config /var/lib/botman-log-agent/config.yaml \
+  --app APP \
+  --tail 5 \
+  --format human \
+  --stdout
+```
+
+The last command verifies the management account can read that app's journald tag. Replace `botmgr` with `botman` on a local target.
+
+### 10.6 Start/stop live logs from the app's command channel
 
 ```text
 /livelogs start APP
-```
-
-Stop them explicitly:
-
-```text
 /livelogs stop APP
 ```
 
-Prefix equivalents are planned:
+Prefix equivalents:
 
 ```text
 !livelogs start APP
 !livelogs stop APP
 ```
 
-Recent logs:
+`start` is idempotent/repairing: it reuses a healthy thread/webhook where possible, reopens an archived reusable thread, or creates a replacement when the saved destination is unusable. Central then rewrites the whole target-agent config and restarts the agent. `stop` disables that app in agent config and best-effort archives its live thread.
+
+### 10.7 Read retained history
+
+Recent retained entries:
 
 ```text
-/logs tail APP
 /logs tail APP lines:100
+!logs tail APP 100
 ```
 
-Convenient prefix fallback:
+Range download in the configured Botman timezone (default `Europe/Istanbul`):
 
 ```text
-!logs APP 100
+/logs download APP from_time:"2026-09-30 10:00" to_time:"2026-09-30 12:00" format:human
+/logs download APP from_time:"2026-09-30 10:00" to_time:"2026-09-30 12:00" format:jsonl
 ```
 
-Historical export, interpreting entered times in the configured display timezone (default `Europe/Istanbul`):
+Prefix form:
 
 ```text
-/logs download APP from:"2026-09-30 10:00" to:"2026-09-30 12:00" format:human
-/logs download APP from:"2026-09-30 10:00" to:"2026-09-30 12:00" format:jsonl
+!logs download APP "2026-09-30 10:00" "2026-09-30 12:00" human
 ```
 
-## 10. Recommended onboarding order
+The central bot converts local wall times through the configured IANA timezone, rejects nonexistent/ambiguous DST wall times, asks the fixed target helper for gzip parts under the Discord upload budget, downloads those parts, and removes the target temp directory. Historical exports preserve full journal messages; Discord-only live truncation does not modify retained history.
 
-For each new app, use this order:
+`/logs tail` currently scans the retained entries matching that app tag with bounded memory and returns the newest requested entries. It is suitable for convenience tails; use a bounded `/logs download` time range for larger investigations.
 
-1. Prepare/verify its target VPS and central SSH trust.
-2. `/config server add` and `/config server test` (once per VPS).
-3. `/config stack add` in the intended command channel (once per stack).
-4. `/config app add`.
-5. `/config compose upload` with all managed services represented correctly.
-6. `/config git setup`, then add the shown public key to the repository as read-only.
-7. `/env upload` and/or `/env set`.
-8. `/config agent provision` once Phase 5 is implemented.
-9. `/update APP`.
-10. `/status APP`.
-11. `/livelogs start APP` if desired.
-12. Verify `/logs tail APP` and one `/logs download` range.
+## 11. App-ready checklist
 
-## What should exist where
+For a deployable app, all of these should be true:
 
-| Item | Central VPS | Target VPS |
+1. Target runtime works non-interactively as its Botman management identity.
+2. Central SSH host verification succeeds for that target.
+3. `/config server test` passes.
+4. `/config stack add` was run in the intended command channel.
+5. `/config app add` exists before final Compose validation.
+6. `/config compose upload` succeeds against the target runtime.
+7. `/config git setup` public key is installed read-only in the repository.
+8. Git-provider host key exists in `/etc/botman/git_known_hosts` on central.
+9. Required env values are present.
+10. `/update APP` succeeds.
+11. `/status APP` reports the expected service state.
+
+If Discord/journald logging is required, also verify:
+
+12. The one-time target log-agent package/systemd/group/sudoers setup is complete.
+13. `/config agent sync` and `/config agent status` succeed for the target server.
+14. The app's Compose journald tag is visible to `botman-log-export`.
+15. `/livelogs start APP` delivers new journal entries.
+16. `/logs tail APP` and a small `/logs download` range both work.
+
+These logging steps are implemented, but real-host cysystemd/Discord acceptance is still required before production sign-off.
+
+## 12. Secret/location matrix
+
+| Item | Central | Target |
 |---|---:|---:|
-| Discord token | yes | no |
+| Discord bot token | yes | no |
 | App Git deploy private key | yes | no |
-| Git provider known_hosts | yes | no |
+| Git-provider trusted host keys | yes | no |
 | Central -> target SSH private key | yes | no |
-| Corresponding SSH public key | local copy | `authorized_keys` |
-| Compose file | managed copy/transit | yes |
-| App source releases | temporary archive/cache | yes |
-| App `.env` | managed over SSH | yes |
-| Git checkout / `.git` | mirror/cache only | no |
-| `botman-log-agent` | only if central hosts apps | yes |
-| Discord log webhook secret | central config; agent config when live | only active logging config |
-
+| Central SSH public key | copy | `botmgr` authorized_keys |
+| Botman-managed Compose file | source/transit | yes |
+| App release source | archive/cache | yes |
+| App `.env` | sent/managed | yes |
+| Git checkout / `.git` | bare cache | no |
+| Log-agent webhook secret | central config when enabled | agent config while enabled |

@@ -164,7 +164,7 @@ Suggested group structure:
 /config git setup
 /config git rotate-key
 
-/config agent provision
+/config agent sync
 /config agent status
 ```
 

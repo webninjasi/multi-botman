@@ -67,6 +67,16 @@ class SettingsConfig(StrictModel):
     journal_max_use: str = "1G"
     live_resume_max_age_sec: int = Field(default=300, ge=1, le=86_400)
     release_keep_count: int = Field(default=3, ge=1, le=20)
+    git_known_hosts: Path = Path("/etc/botman/git_known_hosts")
+    repo_cache_root: Path = Path("/var/lib/botman/repos")
+    deploy_key_root: Path = Path("/var/lib/botman/keys")
+
+    @field_validator("git_known_hosts", "repo_cache_root", "deploy_key_root")
+    @classmethod
+    def validate_central_paths(cls, value: Path) -> Path:
+        validated = _validate_absolute_path(value, label="central Botman path")
+        assert validated is not None
+        return validated
 
     @field_validator("timezone")
     @classmethod
@@ -189,10 +199,16 @@ class GitConfig(StrictModel):
         if (
             not value
             or len(value) > 2048
+            or value.startswith("-")
             or any(ch.isspace() for ch in value)
             or any(ch in value for ch in "\x00\r\n")
         ):
-            raise ValueError("repo_url must be a non-empty Git URL without whitespace/control characters")
+            raise ValueError("repo_url must be a non-empty SSH Git URL without whitespace/control characters")
+        parsed = urlparse(value)
+        ssh_url = parsed.scheme == "ssh" and bool(parsed.hostname) and bool(parsed.path)
+        scp_like = bool(re.fullmatch(r"[A-Za-z0-9._-]+@[^:/\s]+:.+", value))
+        if not (ssh_url or scp_like):
+            raise ValueError("repo_url must use SSH (ssh://... or user@host:path)")
         return value
 
     @field_validator("branch")

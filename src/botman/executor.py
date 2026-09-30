@@ -83,6 +83,93 @@ class Executor(Protocol):
 
 
 class LocalExecutor:
+    async def read_bytes(self, path: str | Path | PurePosixPath) -> bytes:
+        return await asyncio.to_thread(Path(path).read_bytes)
+
+    async def write_bytes(
+        self,
+        path: str | Path | PurePosixPath,
+        data: bytes,
+        *,
+        mode: int = 0o600,
+        atomic: bool = True,
+    ) -> None:
+        target = Path(path)
+
+        def write() -> None:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if not atomic:
+                fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+                try:
+                    with os.fdopen(fd, "wb") as handle:
+                        handle.write(data)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                finally:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                os.chmod(target, mode)
+                return
+
+            temp = target.with_name(f".{target.name}.botman-{uuid.uuid4().hex}.tmp")
+            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+            try:
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(data)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temp, target)
+                os.chmod(target, mode)
+            except Exception:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                try:
+                    temp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise
+
+        await asyncio.to_thread(write)
+
+    async def upload(self, local_path: str | Path, remote_path: str | Path | PurePosixPath) -> None:
+        data = await asyncio.to_thread(Path(local_path).read_bytes)
+        await self.write_bytes(remote_path, data, mode=0o600, atomic=True)
+
+    async def download(self, remote_path: str | Path | PurePosixPath, local_path: str | Path) -> None:
+        data = await self.read_bytes(remote_path)
+        target = Path(local_path)
+        await asyncio.to_thread(target.write_bytes, data)
+
+    async def write_privileged_bytes(
+        self,
+        path: str | Path | PurePosixPath,
+        data: bytes,
+        *,
+        mode: int = 0o600,
+    ) -> None:
+        """Atomically replace a privileged local path through checked sudo commands."""
+        target = Path(path)
+        if not target.is_absolute():
+            raise ValueError("privileged target path must be absolute")
+        token = uuid.uuid4().hex
+        upload = Path("/tmp") / f"botman-upload-{token}"
+        stage = target.with_name(f".{target.name}.botman-{token}.tmp")
+        await self.write_bytes(upload, data, mode=0o600, atomic=False)
+        try:
+            await self.run(
+                ["sudo", "install", "-m", f"{mode:04o}", "--", str(upload), str(stage)],
+                check=True,
+            )
+            await self.run(["sudo", "chmod", f"{mode:04o}", "--", str(stage)], check=True)
+            await self.run(["sudo", "mv", "--", str(stage), str(target)], check=True)
+        finally:
+            await self.run(["rm", "-f", "--", str(upload)], check=False)
+            await self.run(["sudo", "rm", "-f", "--", str(stage)], check=False)
+
     async def run(
         self,
         argv: Sequence[str | os.PathLike[str]],

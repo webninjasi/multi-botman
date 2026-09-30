@@ -75,3 +75,28 @@ Because nothing had been deployed, the project deliberately chose not to preserv
 ## Current state
 
 Planning is complete and fresh implementation has started. Phase 1 (models/config/security executor/routing) is complete. Phase 2 Compose command construction, stack locking, lifecycle core, and Compose validation are implemented; Discord command adapters and upload transport remain. The archived code remains reference-only.
+
+## Fresh implementation progress (2026-09-30)
+
+The new codebase moved through the first deployment-capable slice:
+
+- strict central config/persistence/routing/executor foundation
+- stack-aware Compose management with runtime validation and operation locks
+- real discord.py lifecycle/admin/update registration
+- central Git-over-SSH deploy-key/cache path
+- exact-SHA archive deployment with checksum, staged releases, atomic current switch, service-only build/up, rollback attempts, and transcripts
+- slash-only env/config onboarding commands
+- new cysystemd-based log-agent core with no producer queue, line-aware Discord formatting, fatal-destination suspension, and atomic cursor checkpoints
+- systemd units and a corrected VPS/Discord setup runbook
+
+The log-agent is intentionally a fresh implementation; no `journalctl` subprocess or archived queue/buffer design was carried forward.
+
+
+## Fresh implementation continuation (2026-09-30)
+
+- Added persistent central `/livelogs start|stop` control with webhook/thread repair, server-scoped synchronization, and rollback if the target agent cannot be restarted.
+- Added `/config agent sync|status`; target OS/package provisioning remains an explicit one-time manual runbook step.
+- Added `botman-log-export` using cysystemd finite journal reads, protected app-to-identifier lookup, complete human/JSONL gzip exports, size-bounded parts, and empty-range artifacts.
+- Added hybrid `/logs tail|download` with app-channel authorization, IANA-timezone conversion, DST gap/ambiguity rejection, target-temp cleanup, and Discord upload budgeting.
+- Hardened agent service control to non-interactive `sudo -n` and serialized live-log mutation+sync per target server.
+- Automated suite reached 113 passing tests; real VPS/container/journald/Discord acceptance remains outstanding.

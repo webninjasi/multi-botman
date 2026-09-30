@@ -34,8 +34,7 @@ class StackLockRegistry:
 ExecutorFactory = Callable[[ResolvedApp], Executor]
 
 
-def executor_for_resolved_app(resolved: ResolvedApp) -> Executor:
-    server = resolved.server
+def executor_for_server(server: LocalServerConfig | SSHServerConfig) -> Executor:
     if isinstance(server, LocalServerConfig):
         return LocalExecutor()
     if isinstance(server, SSHServerConfig):
@@ -48,6 +47,10 @@ def executor_for_resolved_app(resolved: ResolvedApp) -> Executor:
             connect_timeout=server.connect_timeout_sec,
         )
     raise TypeError(f"unsupported server config: {type(server)!r}")
+
+
+def executor_for_resolved_app(resolved: ResolvedApp) -> Executor:
+    return executor_for_server(resolved.server)
 
 
 class ComposeManager:
@@ -108,11 +111,17 @@ class ComposeManager:
 
 
 class LifecycleService:
-    """Authorization boundary used by future slash and prefix command adapters."""
+    """Shared authorization boundary for slash and prefix lifecycle commands."""
 
-    def __init__(self, config: BotmanConfig, compose: ComposeManager | None = None):
+    def __init__(
+        self,
+        config: BotmanConfig,
+        compose: ComposeManager | None = None,
+        *,
+        locks: StackLockRegistry | None = None,
+    ):
         self.config = config
-        self.compose = compose or ComposeManager(config)
+        self.compose = compose or ComposeManager(config, locks=locks)
 
     async def execute(
         self,
@@ -187,3 +196,121 @@ def validate_compose_yaml(
                 f"service {app.service!r} build context must be ./{expected}"
             )
     return parsed
+
+
+class ComposeRuntimeValidationError(RuntimeError):
+    """Target Compose runtime rejected a statically valid configuration."""
+
+    def __init__(self, result: ExecResult):
+        self.result = result
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        super().__init__(f"compose config validation failed: {detail}")
+
+
+class ComposeTransportError(RuntimeError):
+    """Compose file transport or activation failed."""
+
+
+class ComposeAdminService:
+    """Upload/show stack Compose configuration without deploying applications."""
+
+    def __init__(
+        self,
+        config: BotmanConfig,
+        *,
+        executor_factory: ExecutorFactory = executor_for_resolved_app,
+        locks: StackLockRegistry | None = None,
+    ):
+        self.config = config
+        self.executor_factory = executor_factory
+        self.locks = locks or StackLockRegistry()
+
+    def _resolved_for_stack(self, stack_name: str) -> ResolvedApp:
+        if stack_name not in self.config.stacks:
+            raise KeyError(f"unknown stack: {stack_name}")
+        for app_name, app in self.config.apps.items():
+            if app.stack == stack_name:
+                from .routing import resolve_app
+
+                return resolve_app(self.config, app_name)
+
+        # A stack may be configured before its first app. Build the minimum
+        # resolved shape expected by executor factories using a synthetic app
+        # is deliberately avoided; use a small stack-aware executor helper.
+        stack = self.config.stacks[stack_name]
+        server = self.config.servers[stack.server]
+        from .models import AppConfig, GitConfig
+
+        placeholder = AppConfig(
+            stack=stack_name,
+            service="botman-placeholder",
+            log_identifier=f"botman-{stack_name}-placeholder",
+            git=GitConfig(repo_url="ssh://placeholder.invalid/repo.git"),
+        )
+        return ResolvedApp(
+            name="botman-placeholder",
+            app=placeholder,
+            stack_name=stack_name,
+            stack=stack,
+            server_name=stack.server,
+            server=server,
+        )
+
+    def _base_argv(self, stack_name: str, compose_file: PurePosixPath) -> tuple[str, ...]:
+        stack = self.config.stacks[stack_name]
+        server = self.config.servers[stack.server]
+        return (
+            *server.compose_argv,
+            "-p",
+            stack.project_name,
+            "-f",
+            str(compose_file),
+        )
+
+    async def upload(self, stack_name: str, content: bytes | str) -> ExecResult:
+        """Validate, runtime-check, then atomically activate a Compose file."""
+
+        validate_compose_yaml(self.config, stack_name, content)
+        payload = content.encode("utf-8") if isinstance(content, str) else content
+        resolved = self._resolved_for_stack(stack_name)
+        executor = self.executor_factory(resolved)
+        stack_root = self.config.stack_root(stack_name)
+        target = self.config.compose_path(stack_name)
+        import uuid
+
+        staged = stack_root / f".{target.name}.botman-{uuid.uuid4().hex}.tmp"
+        lock = await self.locks.get(stack_name)
+        async with lock:
+            await executor.run(("mkdir", "-p", "--", str(stack_root)), timeout=30, check=True)
+            try:
+                write_bytes = getattr(executor, "write_bytes", None)
+                if not callable(write_bytes):
+                    raise ComposeTransportError("executor does not support file writes")
+                await write_bytes(staged, payload, mode=0o640, atomic=False)
+                result = await executor.run(
+                    (*self._base_argv(stack_name, staged), "config"),
+                    timeout=60,
+                    check=False,
+                )
+                if not result.ok:
+                    raise ComposeRuntimeValidationError(result)
+                await executor.run(("mv", "--", str(staged), str(target)), timeout=30, check=True)
+                return result
+            finally:
+                await executor.run(("rm", "-f", "--", str(staged)), timeout=30, check=False)
+
+    async def show(self, stack_name: str) -> str:
+        resolved = self._resolved_for_stack(stack_name)
+        executor = self.executor_factory(resolved)
+        read_bytes = getattr(executor, "read_bytes", None)
+        if not callable(read_bytes):
+            raise ComposeTransportError("executor does not support file reads")
+        data = await read_bytes(self.config.compose_path(stack_name))
+        if len(data) > MAX_COMPOSE_BYTES:
+            raise ComposeTransportError(
+                f"stored Compose file exceeds supported {MAX_COMPOSE_BYTES}-byte limit"
+            )
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ComposeTransportError("stored Compose file is not valid UTF-8") from exc

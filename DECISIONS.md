@@ -92,5 +92,5 @@ Historical downloads preserve the original journald message and therefore compen
 ## Agent reload behavior
 
 - Hot config reload is not needed in v1.
-- Central may rewrite `/etc/botman-agent/config.yaml` and `systemctl restart` the agent for live-log config changes.
+- Central may rewrite `/var/lib/botman-log-agent/config.yaml` and `systemctl restart` the agent for live-log config changes.
 - A brief interruption to other live streams on that VPS is acceptable; checkpoint/resume policy handles short restarts.
