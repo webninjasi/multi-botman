@@ -170,3 +170,10 @@ The log-agent is intentionally a fresh implementation; no `journalctl` subproces
 - Empty executable names and NUL-containing arguments remain rejected.
 - Added regression coverage for both behaviors.
 - Added `reference/` to `.gitignore`.
+
+## Env slash-command annotation fix (2026-09-30)
+
+- Fixed `/env` command registration under discord.py when postponed annotations caused `discord.Interaction` / `discord.Attachment` to be resolved from module globals where `discord` was not defined.
+- `/env` now exposes concrete runtime Discord annotation types when commands are registered.
+- Added regression coverage for slash-command annotation resolution.
+

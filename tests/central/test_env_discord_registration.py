@@ -124,3 +124,20 @@ def test_env_commands_register_separately_from_admin_commands(tmp_path, monkeypa
         "set",
         "unset",
     }
+
+
+def test_env_command_annotations_are_runtime_discord_types(tmp_path, monkeypatch) -> None:
+    """discord.py resolves slash-command annotations and must not see unresolved strings."""
+    install_fake_discord(monkeypatch)
+    bot = FakeBot()
+    register_env_commands(
+        bot,
+        ConfigStore(tmp_path / "config.yaml"),
+        locks=StackLockRegistry(),
+    )
+    env_group = bot.tree.commands[0]
+    env_upload = next(c for c in env_group.children if c.__command_name__ == "upload")
+
+    fake_discord = sys.modules["discord"]
+    assert env_upload.__annotations__["interaction"] is fake_discord.Interaction
+    assert env_upload.__annotations__["file"] is fake_discord.Attachment

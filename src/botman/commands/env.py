@@ -1,7 +1,5 @@
 """Slash-only, ephemeral environment management for stack-authorized deployers."""
 
-from __future__ import annotations
-
 import io
 
 from ..compose import StackLockRegistry

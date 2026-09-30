@@ -7,7 +7,7 @@
 - No production deployment exists; backward compatibility is not required.
 - Archived code under `reference/original-ag-botman/` is reference-only.
 - Fresh implementation is active.
-- Current automated suite: **170 passed**.
+- Current automated suite: **171 passed**.
 - Phase 1 is complete.
 - Phase 2 central Compose/lifecycle/Discord core is complete at unit level.
 - Phase 3 central Git + `/update` deployment core and Discord adapter are complete at unit level.
@@ -98,3 +98,8 @@ Do **not** repair or reuse archived `py/agent/log_agent.py` or deployment code a
 ## 2026-09-30 canonical Git install/update layout
 
 Production installation is now standardized on `/opt/botman` as the Git checkout, `/opt/botman-venv` for the central process, and `/opt/botman-agent-venv` for the target agent/exporter. `scripts/setup.sh` provisions the supported central/rootless-target host roles and `scripts/update.sh` performs clean fast-forward updates plus venv/unit refresh. Historical log helper/config paths live in central settings (`log_export_bin`, `agent_config_path`), and agent sync uses the same configured target config path.
+
+## 2026-09-30 `/env` Discord registration fix
+
+The stack-authorized `/env` module no longer uses postponed annotations for nested slash callbacks. This prevents discord.py from raising `NameError: name 'discord' is not defined` while resolving `discord.Interaction` / `discord.Attachment` during bot startup. Regression coverage asserts those annotations are concrete runtime types.
+
