@@ -7,12 +7,12 @@
 - No production deployment exists; backward compatibility is not required.
 - Archived code under `reference/original-ag-botman/` is reference-only.
 - Fresh implementation is active.
-- Current automated suite: **162 passed**.
+- Current automated suite: **168 passed**.
 - Phase 1 is complete.
 - Phase 2 central Compose/lifecycle/Discord core is complete at unit level.
 - Phase 3 central Git + `/update` deployment core and Discord adapter are complete at unit level.
 - Phase 4 live log-agent core/runtime is implemented and unit-tested with fake journal/HTTP adapters.
-- Phase 5 central live-log control is implemented; one-time target agent OS/package provisioning remains manual and documented.
+- Phase 5 central live-log control is implemented; repeatable rootless-Podman target provisioning now exists in `scripts/setup.sh`, with manual alternatives documented.
 - Phase 6 historical exporter plus `/logs tail|download` is implemented and unit-tested.
 - Phase 7 env/config onboarding, including conservative server/stack/app edit UX, is implemented.
 - Phase 8 packaging/docs are in progress; central/agent units, clean-checkout CI, wheel-content verification, target-host preflight, and Ruff/mypy CI gates exist. The quality tools could not be installed in this offline build, so their first actual run plus real-host acceptance remain.
@@ -73,7 +73,7 @@ See `VPS_AND_DISCORD_SETUP.md` for the exact onboarding order.
 2. Run `botman-target-preflight` on each real target, then run actual Linux/cysystemd integration for the live reader and historical exporter, including retained-history and journal-permission checks.
 3. Run real Docker and Podman Compose deployment/lifecycle/failure acceptance.
 4. Run a Discord test-guild acceptance pass for hybrid command registration, threads, webhooks, upload limits, and archived/locked thread behavior.
-5. Decide whether to automate target agent provisioning after real-host package/systemd behavior is verified; the manual runbook is the supported bootstrap today.
+5. Exercise `scripts/setup.sh` and `scripts/update.sh` on the real central and second target VPS, including reboot persistence of the rootless Podman socket.
 6. Reconcile runtime-specific findings before v1 completion.
 
 Do **not** repair or reuse archived `py/agent/log_agent.py` or deployment code as the implementation baseline.
@@ -90,3 +90,8 @@ Do **not** repair or reuse archived `py/agent/log_agent.py` or deployment code a
 ## 2026-09-30 deploy-key setup fix
 
 `/config git setup` previously failed before launching `ssh-keygen` because `LocalGitRunner` rejected the intentional empty passphrase argument in `ssh-keygen -N ""`. The validator now allows empty non-executable arguments while still rejecting an empty executable and NUL bytes. `reference/` is now ignored by Git.
+
+
+## 2026-09-30 canonical Git install/update layout
+
+Production installation is now standardized on `/opt/botman` as the Git checkout, `/opt/botman-venv` for the central process, and `/opt/botman-agent-venv` for the target agent/exporter. `scripts/setup.sh` provisions the supported central/rootless-target host roles and `scripts/update.sh` performs clean fast-forward updates plus venv/unit refresh. Historical log helper/config paths live in central settings (`log_export_bin`, `agent_config_path`), and agent sync uses the same configured target config path.

@@ -58,6 +58,8 @@ def test_valid_config_and_derived_paths() -> None:
     assert str(config.app_env_path("bots", "app-a")) == "/srv/botman/stacks/bots/env/app-a.env"
     assert list(config.apps_for_server("remote-1")) == ["bots.app-a"]
     assert list(config.apps_for_channel(1234567890)) == ["app-a"]
+    assert str(config.settings.log_export_bin) == "/opt/botman-agent-venv/bin/botman-log-export"
+    assert str(config.settings.agent_config_path) == "/var/lib/botman-log-agent/config.yaml"
 
 
 @pytest.mark.parametrize(
@@ -72,6 +74,8 @@ def test_valid_config_and_derived_paths() -> None:
         (("stacks", "bots", "apps", "app-a", "git", "branch"), "../main"),
         (("settings", "timezone"), "Not/A_Zone"),
         (("settings", "release_keep_count"), 0),
+        (("settings", "log_export_bin"), "relative/exporter"),
+        (("settings", "agent_config_path"), "relative/config.yaml"),
     ],
 )
 def test_invalid_values_are_rejected(path: tuple[str, ...], value) -> None:

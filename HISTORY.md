@@ -1,3 +1,10 @@
+
+## 2026-09-30 — Git-layout installer/updater and configurable log exporter
+
+- Standardized production venvs on `/opt/botman-venv` and `/opt/botman-agent-venv`; shipped systemd units now use those paths.
+- Added `scripts/setup.sh` for repeatable central/target/all installation, including rootless `botmgr` Podman user-manager/socket setup, journald, agent permissions, venvs, units, and restricted sudoers.
+- Added `scripts/update.sh` for clean fast-forward Git updates, venv reinstalls, unit refresh, daemon reload, and configured-service restarts.
+- Added `settings.log_export_bin` and `settings.agent_config_path`; historical logs and agent sync now use configured paths rather than independent hardcoded constants.
 # Project History and Pivots
 
 ## 2026-09-30 — Static quality gate wiring

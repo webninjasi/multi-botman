@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import yaml
 
 from botman_agent.config import AgentApp, AgentConfig, AgentSettings
@@ -11,7 +11,6 @@ from .compose import executor_for_server
 from .executor import ExecResult
 from .models import BotmanConfig
 
-AGENT_CONFIG_PATH = PurePosixPath("/var/lib/botman-log-agent/config.yaml")
 AGENT_SERVICE = "botman-log-agent.service"
 AGENT_USER = "botman-log-agent"
 
@@ -72,7 +71,7 @@ class AgentControlService:
         # Provisioning creates a setgid botman-log-agent directory and adds the
         # management identity to that group. This avoids granting broad sudo
         # file-copy/move rights merely to refresh a webhook configuration.
-        await writer(AGENT_CONFIG_PATH, payload, mode=0o640, atomic=True)
+        await writer(self.config.settings.agent_config_path, payload, mode=0o640, atomic=True)
         if not restart:
             return None
         await executor.run(["sudo", "-n", "systemctl", "restart", AGENT_SERVICE], timeout=30, check=True)

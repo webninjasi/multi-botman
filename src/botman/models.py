@@ -70,8 +70,16 @@ class SettingsConfig(StrictModel):
     git_known_hosts: Path = Path("/etc/botman/git_known_hosts")
     repo_cache_root: Path = Path("/var/lib/botman/repos")
     deploy_key_root: Path = Path("/var/lib/botman/keys")
+    log_export_bin: Path = Path("/opt/botman-agent-venv/bin/botman-log-export")
+    agent_config_path: Path = Path("/var/lib/botman-log-agent/config.yaml")
 
-    @field_validator("git_known_hosts", "repo_cache_root", "deploy_key_root")
+    @field_validator(
+        "git_known_hosts",
+        "repo_cache_root",
+        "deploy_key_root",
+        "log_export_bin",
+        "agent_config_path",
+    )
     @classmethod
     def validate_central_paths(cls, value: Path) -> Path:
         validated = _validate_absolute_path(value, label="central Botman path")

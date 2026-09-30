@@ -82,6 +82,18 @@ async def test_sync_writes_protected_config_and_restarts(monkeypatch):
     assert ("sudo", "-n", "systemctl", "restart", "botman-log-agent.service") in executor.calls
 
 
+@pytest.mark.asyncio
+async def test_sync_uses_configured_agent_config_path(monkeypatch):
+    executor = Executor()
+    monkeypatch.setattr(mod, "executor_for_server", lambda server: executor)
+    cfg = config()
+    cfg.settings.agent_config_path = "/custom/agent/config.yaml"
+
+    await AgentControlService(cfg).sync("vps1", restart=False)
+
+    assert executor.writes[0][0] == "/custom/agent/config.yaml"
+
+
 def test_agent_config_namespaces_duplicate_app_names_across_stacks_on_same_server():
     cfg = BotmanConfig.model_validate(
         {

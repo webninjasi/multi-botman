@@ -79,10 +79,25 @@ async def test_tail_uses_protected_helper_path():
     output = await service.tail(app_name="app-a", channel_id=10, lines=25)
     assert output == "tail output"
     call = executor.calls[0]
-    assert call[0] == "/opt/botman-agent/.venv/bin/botman-log-export"
+    assert call[0] == "/opt/botman-agent-venv/bin/botman-log-export"
     assert call[call.index("--config") + 1] == "/var/lib/botman-log-agent/config.yaml"
     assert call[call.index("--app") + 1] == "s1.app-a"
     assert call[call.index("--tail") + 1] == "25"
+
+
+@pytest.mark.asyncio
+async def test_tail_uses_configured_exporter_and_agent_config_paths():
+    executor = FakeExecutor()
+    cfg = config()
+    cfg.settings.log_export_bin = "/custom/bin/botman-log-export"
+    cfg.settings.agent_config_path = "/custom/botman-agent/config.yaml"
+    service = HistoricalLogsService(cfg, executor_factory=lambda _: executor)
+
+    await service.tail(app_name="app-a", channel_id=10, lines=10)
+
+    call = executor.calls[0]
+    assert call[0] == "/custom/bin/botman-log-export"
+    assert call[call.index("--config") + 1] == "/custom/botman-agent/config.yaml"
 
 
 @pytest.mark.asyncio

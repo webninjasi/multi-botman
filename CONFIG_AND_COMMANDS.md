@@ -13,6 +13,11 @@ settings:
   journal_max_use: 1G
   live_resume_max_age_sec: 300
   release_keep_count: 3
+  git_known_hosts: /etc/botman/git_known_hosts
+  repo_cache_root: /var/lib/botman/repos
+  deploy_key_root: /var/lib/botman/keys
+  log_export_bin: /opt/botman-agent-venv/bin/botman-log-export
+  agent_config_path: /var/lib/botman-log-agent/config.yaml
 
 servers:
   local:
@@ -63,7 +68,7 @@ stacks:
           branch: main
 ```
 
-Prefer derived standard paths over user-configured absolute paths:
+Prefer derived standard app/stack paths. The central helper locations above are configurable absolute paths so nonstandard target installations can be supported without code changes:
 
 - stack root: `/srv/botman/stacks/<stack>`
 - app release root: `<stack>/apps/<app>`

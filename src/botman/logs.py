@@ -16,8 +16,6 @@ from .executor import Executor
 from .models import BotmanConfig
 from .routing import ResolvedApp, authorize_app_channel
 
-AGENT_CONFIG_PATH = PurePosixPath("/var/lib/botman-log-agent/config.yaml")
-LOG_EXPORT_BIN = PurePosixPath("/opt/botman-agent/.venv/bin/botman-log-export")
 EXPORT_ROOT = PurePosixPath("/var/tmp")
 DEFAULT_EXPORT_PART_BYTES = 7_500_000
 MAX_EXPORT_PARTS = 20
@@ -93,9 +91,9 @@ class HistoricalLogsService:
         agent_key = self.config.agent_app_key(resolved.stack_name, resolved.name)
         result = await self.executor_factory(resolved).run(
             [
-                str(LOG_EXPORT_BIN),
+                str(self.config.settings.log_export_bin),
                 "--config",
-                str(AGENT_CONFIG_PATH),
+                str(self.config.settings.agent_config_path),
                 "--app",
                 agent_key,
                 "--tail",
@@ -138,9 +136,9 @@ class HistoricalLogsService:
         try:
             result = await executor.run(
                 [
-                    str(LOG_EXPORT_BIN),
+                    str(self.config.settings.log_export_bin),
                     "--config",
-                    str(AGENT_CONFIG_PATH),
+                    str(self.config.settings.agent_config_path),
                     "--app",
                     agent_key,
                     "--since-utc",

@@ -100,8 +100,8 @@ An app owns:
 └── state/                  # 0700 to agent
     └── <stack>.<app>.json  # 0600 cursor/timestamp checkpoint per stack-local app
 
-/opt/botman-agent/
-└── .venv/ + installed agent package
+/opt/botman/                  # Git checkout shared by central/agent installs
+/opt/botman-agent-venv/       # target agent/exporter virtualenv
 ```
 
 Persistent app data must not be stored inside `apps/<app>/releases/*`.

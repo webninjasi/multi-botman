@@ -50,7 +50,7 @@ Updated 2026-09-30 for the fresh Botman implementation.
 - `tests/central/`
 - `tests/agent/`
 
-Current fresh result: **162 passed**.
+Current fresh result: **168 passed**.
 
 ## Operator/design documentation
 
@@ -78,3 +78,6 @@ Current fresh result: **162 passed**.
 Original archived upload SHA-256:
 
 `1a794f09455b87d598fa6d8e2ef024d68444674a9d76d2575998a94588b20c8d`
+
+- `scripts/setup.sh` — repeatable central/target/all host bootstrap for the canonical Git + external-venv layout.
+- `scripts/update.sh` — fast-forward Git update, reinstall, systemd unit refresh, and configured-service restart.

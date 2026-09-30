@@ -7,6 +7,8 @@ settings:
   git_known_hosts: /etc/botman/git_known_hosts
   repo_cache_root: /var/lib/botman/repos
   deploy_key_root: /var/lib/botman/keys
+  log_export_bin: /opt/botman-agent-venv/bin/botman-log-export
+  agent_config_path: /var/lib/botman-log-agent/config.yaml
 
 servers:
   vps1:

@@ -25,18 +25,57 @@ Implemented and covered by the current automated suite:
 - clean-checkout CI for Python 3.11-3.13, Ruff/mypy quality gates, and wheel-content/entry-point verification
 - target-host preflight CLI for Compose, journald policy/permissions, cysystemd, systemd unit/sudoers, and optional app export checks
 
-The automated suite currently passes **162 tests**.
+The automated suite currently passes **168 tests**.
 
 Still required before calling v1 production-complete:
 
-- real-host verification of the documented one-time target log-agent provisioning; automation can be decided after that evidence exists
+- real-host verification of the automated/manual target bootstrap across supported distributions
 - real Linux/cysystemd+journald acceptance
 - real Docker and Podman integration/failure drills on VPSes
 - end-to-end Discord test-guild acceptance
 
 ## Operator setup
 
-Read [`VPS_AND_DISCORD_SETUP.md`](VPS_AND_DISCORD_SETUP.md). It distinguishes:
+The canonical production layout is a Git checkout plus external virtualenvs:
+
+```text
+/opt/botman/                 Git checkout
+/opt/botman-venv/            central control-plane venv
+/opt/botman-agent-venv/      target agent/exporter venv
+/etc/botman/                 central config/secrets
+/var/lib/botman-log-agent/   protected target agent config/state
+/srv/botman/stacks/          managed application stacks
+```
+
+Bootstrap the checkout first if the host does not have it yet:
+
+```bash
+sudo git clone https://github.com/webninjasi/multi-botman.git /opt/botman
+```
+
+For a central VPS that also hosts rootless Podman apps, run:
+
+```bash
+sudo /opt/botman/scripts/setup.sh --mode all
+```
+
+For a target-only VPS:
+
+```bash
+sudo /opt/botman/scripts/setup.sh --mode target
+```
+
+The setup script is idempotent for the supported layout. It installs host prerequisites, users/directories, external venvs, systemd units, persistent journald policy, the restricted agent-control sudoers rule, and rootless `botmgr` Podman including its persistent user socket. It deliberately does **not** invent Discord secrets, SSH trust, or Git deploy keys.
+
+After code is pushed to the configured branch, update an installed host with:
+
+```bash
+sudo /opt/botman/scripts/update.sh
+```
+
+The updater refuses tracked local changes, fast-forwards Git only, reinstalls installed central/agent components, refreshes the shipped unit files, reloads systemd, and restarts configured services.
+
+Read [`VPS_AND_DISCORD_SETUP.md`](VPS_AND_DISCORD_SETUP.md) for first-time trust/onboarding, manual alternatives, Discord commands, and migration details. It distinguishes:
 
 - central VPS setup
 - remote target VPS setup
@@ -45,7 +84,7 @@ Read [`VPS_AND_DISCORD_SETUP.md`](VPS_AND_DISCORD_SETUP.md). It distinguishes:
 - Docker/Podman privilege choices
 - Compose/journald requirements
 - the runnable Discord onboarding/deployment command sequence
-- manual one-time target log-agent installation, followed by Discord-controlled live/historical logging
+- automated rootless-Podman target bootstrap plus manual alternatives, followed by Discord-controlled live/historical logging
 
 A model configuration example is in [`config.example.yaml`](config.example.yaml).
 

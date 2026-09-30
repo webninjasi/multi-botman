@@ -4,13 +4,52 @@ This is the operator runbook for installing Botman and getting an application to
 
 ## What is runnable now
 
-As of 2026-09-30, the central Discord bot, lifecycle commands, admin onboarding commands, Compose upload/validation, Git deploy-key setup, env management, `/update`, `/livelogs start|stop`, and `/logs tail|download` are implemented and unit-tested. The target `botman-log-agent`, `botman-log-export`, and systemd unit are included. Target OS/package provisioning remains a one-time manual step documented below. Stack-scoped config/Git/env mutations serialize with lifecycle/deployment operations; queued runtime work reloads config after taking that lock, and agent sync serializes with live-log state changes.
+As of 2026-09-30, the central Discord bot, lifecycle commands, admin onboarding commands, Compose upload/validation, Git deploy-key setup, env management, `/update`, `/livelogs start|stop`, and `/logs tail|download` are implemented and unit-tested. The target `botman-log-agent`, `botman-log-export`, and systemd unit are included. A repeatable rootless-Podman setup script is included; the manual steps remain documented for auditing and nonstandard runtimes. Stack-scoped config/Git/env mutations serialize with lifecycle/deployment operations; queued runtime work reloads config after taking that lock, and agent sync serializes with live-log state changes.
 
-Current automated result: **162 tests passed**. Real VPS Docker/Podman/cysystemd and Discord test-guild acceptance are still required before calling v1 production-complete.
+Current automated result: **168 tests passed**. Real VPS Docker/Podman/cysystemd and Discord test-guild acceptance are still required before calling v1 production-complete.
 
 Do not deploy anything under `reference/`.
 
 If you already created a config with the earlier top-level `apps:` layout, this build loads it and nests each app under its recorded stack in memory. The next config mutation/save rewrites the file in the corrected `stacks.<stack>.apps` layout. App names can then be reused in other stacks.
+
+## 0. Canonical automated install/update
+
+The supported installation layout is:
+
+```text
+/opt/botman/                 Git checkout
+/opt/botman-venv/            central venv
+/opt/botman-agent-venv/      agent/exporter venv
+/etc/botman/                 central config/secrets
+/var/lib/botman-log-agent/   protected target config/state
+/srv/botman/stacks/          managed stacks
+```
+
+After cloning the repository, a central VPS that is also a rootless-Podman target can perform the repeatable host bootstrap with:
+
+```bash
+sudo /opt/botman/scripts/setup.sh --mode all
+```
+
+A target-only VPS can use:
+
+```bash
+sudo /opt/botman/scripts/setup.sh --mode target
+```
+
+The target setup configures `botmgr` for rootless Podman, enables linger, starts the real `user@UID.service`, enables the per-user `podman.socket`, configures persistent journald, creates the log-agent account/state permissions, installs the agent venv, installs the unit, and writes the restricted sudoers rule. This includes the user-manager/socket setup required when `sudo -iu botmgr systemctl --user ...` would otherwise fail with `Failed to connect to bus`.
+
+The script intentionally leaves trust and secrets to the operator: `/etc/botman/env`, central -> target authorized keys/host verification, and Git-provider host verification/deploy keys still require explicit setup.
+
+For subsequent code updates:
+
+```bash
+sudo /opt/botman/scripts/update.sh
+```
+
+`update.sh` requires a clean tracked Git worktree, fetches and fast-forwards `main`, reinstalls the applicable venv(s), replaces the shipped systemd units, reloads systemd, and restarts services only when they are configured. Use `--mode central`, `--mode target`, or `--mode all` to override auto-detection.
+
+The manual steps below remain useful for auditing or nonstandard runtimes.
 
 ## 1. Host roles
 
@@ -76,16 +115,19 @@ sudo install -d -o botman -g botman -m 0700 /var/lib/botman
 sudo install -d -o botman -g botman -m 0700 /var/lib/botman/repos
 sudo install -d -o botman -g botman -m 0700 /var/lib/botman/keys
 sudo install -d -o botman -g botman -m 0700 /etc/botman
-sudo install -d -o botman -g botman -m 0755 /opt/botman
 ```
 
-Copy the **fresh repository root** into `/opt/botman`, then install it:
+Clone the repository into `/opt/botman` as `botman`, then install it into the external central venv:
 
 ```bash
-sudo -u botman python3 -m venv /opt/botman/.venv
-sudo -u botman /opt/botman/.venv/bin/pip install --upgrade pip
-sudo -u botman /opt/botman/.venv/bin/pip install /opt/botman
+sudo -u botman git clone https://github.com/webninjasi/multi-botman.git /opt/botman
+sudo install -d -o botman -g botman -m 0755 /opt/botman-venv
+sudo -u botman python3.11 -m venv /opt/botman-venv
+sudo -u botman /opt/botman-venv/bin/python -m pip install --upgrade pip setuptools wheel
+sudo -u botman /opt/botman-venv/bin/python -m pip install /opt/botman
 ```
+
+Use whichever Python 3.11+ executable exists on the host. Do not place the production venv inside the Git checkout.
 
 Create the protected environment file:
 
@@ -454,7 +496,7 @@ sudo systemctl restart systemd-journald
 journalctl --disk-usage
 ```
 
-`SystemMaxUse=1G` is a **global VPS journal cap**, not a per-app retention guarantee. If you change `settings.journal_max_use`, keep the host policy aligned manually until provisioning is automated. Review any existing administrator-managed journald policy before installing this drop-in.
+`SystemMaxUse=1G` is a **global VPS journal cap**, not a per-app retention guarantee. If you change `settings.journal_max_use`, rerun setup with `--journal-max-use SIZE` or keep the host policy aligned manually. Review any existing administrator-managed journald policy before installing this drop-in.
 
 ### 10.2 Create the agent account and protected config directory
 
@@ -473,7 +515,6 @@ sudo usermod -aG botman-log-agent,systemd-journal botmgr
 sudo chown root:botman-log-agent /var/lib/botman-log-agent
 sudo chmod 3770 /var/lib/botman-log-agent
 sudo install -d -o botman-log-agent -g botman-log-agent -m 0700 /var/lib/botman-log-agent/state
-sudo install -d -o root -g root -m 0755 /opt/botman-agent
 ```
 
 Why `botmgr` gets both groups:
@@ -499,25 +540,29 @@ Restarting `botman.service` is required after changing the local service account
 
 ### 10.3 Install the agent/exporter package
 
-Copy the same fresh repository/package to `/opt/botman-agent`. On Debian/Ubuntu:
+Use the same `/opt/botman` Git checkout and a separate external agent venv. On Debian/Ubuntu:
 
 ```bash
 sudo apt update
 sudo apt install -y python3 python3-venv python3-pip build-essential libsystemd-dev
-sudo python3 -m venv /opt/botman-agent/.venv
-sudo /opt/botman-agent/.venv/bin/pip install --upgrade pip
-sudo /opt/botman-agent/.venv/bin/pip install '/opt/botman-agent[agent]'
+sudo python3.11 -m venv /opt/botman-agent-venv
+sudo /opt/botman-agent-venv/bin/python -m pip install --upgrade pip setuptools wheel
+sudo /opt/botman-agent-venv/bin/python -m pip install '/opt/botman[agent]'
 
-/opt/botman-agent/.venv/bin/botman-log-agent --help || true
-/opt/botman-agent/.venv/bin/botman-log-export --help
+/opt/botman-agent-venv/bin/botman-log-agent --help || true
+/opt/botman-agent-venv/bin/botman-log-export --help
 ```
 
+Use whichever Python 3.11+ executable exists on the host.
+
 `cysystemd` links against systemd; package names differ outside Debian/Ubuntu. Do not substitute a spawned `journalctl` wrapper for the exporter/agent.
+
+Central `settings.log_export_bin` and `settings.agent_config_path` control the target helper/config paths used by `/logs` and agent sync. Their defaults match `/opt/botman-agent-venv/bin/botman-log-export` and `/var/lib/botman-log-agent/config.yaml`. If either is overridden, keep the target installation/systemd environment aligned.
 
 Install and enable the supplied agent unit, but do not start it manually before central has written its config:
 
 ```bash
-sudo cp /opt/botman-agent/systemd/botman-log-agent.service \
+sudo cp /opt/botman/systemd/botman-log-agent.service \
   /etc/systemd/system/botman-log-agent.service
 sudo systemctl daemon-reload
 sudo systemctl enable botman-log-agent.service
@@ -558,7 +603,7 @@ Use `sudo -u botman ...` for a local target.
 Before returning to Discord, run the packaged preflight as the **same management identity Botman uses**. This checks the Compose command, required groups and directory modes, persistent journald policy, cysystemd 2.x, direct system-journal access, installed/enabled unit, and the exact non-interactive sudo `systemctl status` command:
 
 ```bash
-sudo -u botmgr /opt/botman-agent/.venv/bin/botman-target-preflight \
+sudo -u botmgr /opt/botman-agent-venv/bin/botman-target-preflight \
   --management-user botmgr \
   --compose-command "docker compose" \
   --journal-max-use 1G
@@ -582,7 +627,7 @@ On the target, useful checks are:
 ```bash
 sudo systemctl status botman-log-agent.service --no-pager
 sudo journalctl -u botman-log-agent.service -n 100 --no-pager
-sudo -u botmgr /opt/botman-agent/.venv/bin/botman-log-export \
+sudo -u botmgr /opt/botman-agent-venv/bin/botman-log-export \
   --config /var/lib/botman-log-agent/config.yaml \
   --app STACK.APP \
   --tail 5 \
@@ -595,7 +640,7 @@ The agent/exporter uses an internal stack-qualified key (`STACK.APP`) so repeate
 After `sync` succeeds, the preflight can also require the agent to be active and exercise the same historical reader through the generated protected config:
 
 ```bash
-sudo -u botmgr /opt/botman-agent/.venv/bin/botman-target-preflight \
+sudo -u botmgr /opt/botman-agent-venv/bin/botman-target-preflight \
   --management-user botmgr \
   --compose-command "docker compose" \
   --require-active \
