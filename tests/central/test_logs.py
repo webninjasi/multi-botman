@@ -1,7 +1,5 @@
 import json
 from datetime import UTC
-from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 

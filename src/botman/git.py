@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Protocol, Sequence
 
 from .compose import StackLockRegistry
-from .executor import CommandError, CommandTimeout, ExecResult
+from .executor import CommandTimeout, ExecResult
 from .models import AppConfig, BotmanConfig
 from .routing import ResolvedApp, authorize_app_channel
 

@@ -15,7 +15,7 @@
 - Phase 5 central live-log control is implemented; one-time target agent OS/package provisioning remains manual and documented.
 - Phase 6 historical exporter plus `/logs tail|download` is implemented and unit-tested.
 - Phase 7 env/config onboarding, including conservative server/stack/app edit UX, is implemented.
-- Phase 8 packaging/docs are in progress; central/agent units, clean-checkout CI, wheel-content verification, and a target-host preflight CLI exist. Lint/type and real-host acceptance remain.
+- Phase 8 packaging/docs are in progress; central/agent units, clean-checkout CI, wheel-content verification, target-host preflight, and Ruff/mypy CI gates exist. The quality tools could not be installed in this offline build, so their first actual run plus real-host acceptance remain.
 
 Real Docker, Podman, cysystemd/journald, and Discord test-guild acceptance have not yet been run in this build environment.
 
@@ -69,11 +69,12 @@ See `VPS_AND_DISCORD_SETUP.md` for the exact onboarding order.
 
 ## Immediate next work
 
-1. Run `botman-target-preflight` on each real target, then run actual Linux/cysystemd integration for the live reader and historical exporter, including retained-history and journal-permission checks.
-2. Run real Docker and Podman Compose deployment/lifecycle/failure acceptance.
-3. Run a Discord test-guild acceptance pass for hybrid command registration, threads, webhooks, upload limits, and archived/locked thread behavior.
-4. Decide whether to automate target agent provisioning after real-host package/systemd behavior is verified; the manual runbook is the supported bootstrap today.
-5. Reconcile runtime-specific findings before v1 completion.
+1. Run the configured `python -m ruff check src tests scripts` and `python -m mypy src` gates in a network-enabled dev/CI environment and resolve any first-run findings.
+2. Run `botman-target-preflight` on each real target, then run actual Linux/cysystemd integration for the live reader and historical exporter, including retained-history and journal-permission checks.
+3. Run real Docker and Podman Compose deployment/lifecycle/failure acceptance.
+4. Run a Discord test-guild acceptance pass for hybrid command registration, threads, webhooks, upload limits, and archived/locked thread behavior.
+5. Decide whether to automate target agent provisioning after real-host package/systemd behavior is verified; the manual runbook is the supported bootstrap today.
+6. Reconcile runtime-specific findings before v1 completion.
 
 Do **not** repair or reuse archived `py/agent/log_agent.py` or deployment code as the implementation baseline.
 

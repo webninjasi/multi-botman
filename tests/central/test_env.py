@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from botman.env import EnvMissingError, EnvService, set_env_value, unset_env_value

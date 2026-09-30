@@ -303,7 +303,7 @@ Important workflow tests:
 - agent dedicated-user unit + venv executable
 - startup configuration validation
 - packaged target-host preflight for Compose/journald/cysystemd/systemd/sudoers readiness
-- lint/type checks (still pending; do not claim them from this offline build)
+- Ruff lint and mypy type-check gates are configured in CI; this offline build could not install those tools, so their first execution remains pending
 - clean-checkout unit/compile/wheel verification in CI across Python 3.11-3.13
 - complete automated test suite
 - real Docker host test

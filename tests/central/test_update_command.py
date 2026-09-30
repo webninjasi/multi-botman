@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
 from botman.commands.update import UpdateCommandAdapter, register_update_command

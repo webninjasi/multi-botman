@@ -22,7 +22,7 @@ Implemented and covered by the current automated suite:
 - persistent `/livelogs start|stop` with webhook/thread repair, server-scoped synchronization, and rollback on target-agent restart failure
 - `botman-log-export` plus `/logs tail|download` for retained journald history in human or JSONL gzip parts
 - central and agent systemd unit files with restrictive default umasks
-- clean-checkout CI for Python 3.11-3.13 plus wheel-content/entry-point verification
+- clean-checkout CI for Python 3.11-3.13, Ruff/mypy quality gates, and wheel-content/entry-point verification
 - target-host preflight CLI for Compose, journald policy/permissions, cysystemd, systemd unit/sudoers, and optional app export checks
 
 The automated suite currently passes **162 tests**.
@@ -61,7 +61,10 @@ Python 3.11+ is required.
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e '.[dev,agent]'
+python -m ruff check src tests scripts
+python -m mypy src
 pytest -q
+python -m compileall -q src scripts
 ```
 
 Executables:
