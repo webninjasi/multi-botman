@@ -6,7 +6,7 @@ This is the operator runbook for installing Botman and getting an application to
 
 As of 2026-09-30, the central Discord bot, lifecycle commands, admin onboarding commands, Compose upload/validation, Git deploy-key setup, env management, `/update`, `/livelogs start|stop`, and `/logs tail|download` are implemented and unit-tested. The target `botman-log-agent`, `botman-log-export`, and systemd unit are included. A repeatable rootless-Podman setup script is included; the manual steps remain documented for auditing and nonstandard runtimes. Stack-scoped config/Git/env mutations serialize with lifecycle/deployment operations; queued runtime work reloads config after taking that lock, and agent sync serializes with live-log state changes.
 
-Current automated result: **168 tests passed**. Real VPS Docker/Podman/cysystemd and Discord test-guild acceptance are still required before calling v1 production-complete.
+Current automated result: **170 tests passed**. Real VPS Docker/Podman/cysystemd and Discord test-guild acceptance are still required before calling v1 production-complete.
 
 Do not deploy anything under `reference/`.
 
@@ -320,7 +320,7 @@ Persistent application data belongs in named volumes/shared paths outside releas
 
 ## 9. Runnable Discord onboarding sequence
 
-Admin/config/env commands are slash-only and ephemeral. Run `/config stack add` in the channel which should control the stack.
+`/config` commands are admin-only, slash-only, and ephemeral. `/env` is slash-only/ephemeral but intentionally uses the same stack-channel/app authorization boundary as `/update`, so anyone trusted to deploy from a stack channel is also trusted to manage that stack's app environment. Run `/config stack add` in the channel which should control the stack.
 
 ### Once per target VPS
 
@@ -427,7 +427,7 @@ Use any combination:
 /env show APP
 ```
 
-Run `/env ...` in the stack command channel; the app name is resolved only inside that stack. Env writes are atomic and mode `0600`. They never trigger a restart/deploy, and mutations serialize against lifecycle/deployment work for that stack.
+Run `/env ...` in the stack command channel; the app name is resolved only inside that stack. These commands do not require `ADMIN_IDS`: authorization is deliberately the same channel/app boundary as `/update`. Because `/env show` can reveal secrets, keep membership and command permissions on stack channels limited to trusted deployers. Env writes are atomic and mode `0600`. They never trigger a restart/deploy, and mutations serialize against lifecycle/deployment work for that stack.
 
 ### First deployment
 

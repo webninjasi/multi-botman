@@ -4,7 +4,7 @@
 
 1. Discord channel/category permissions decide who can reach an app's command channel.
 2. Botman resolves command channel -> stack first, then resolves the app only inside that stack for every lifecycle/log/deployment command.
-3. `ADMIN_IDS` is an additional explicit gate for config/env/server management.
+3. `ADMIN_IDS` is an additional explicit gate for `/config` management; `/env` intentionally follows the same stack-channel/app authorization boundary as `/update`.
 4. Central SSH access is the management transport; no new network management ports are exposed.
 5. The log agent holds only what it needs for logging (journal mapping + active Discord webhook credentials), never Git credentials.
 
@@ -72,11 +72,13 @@ Incoming webhook URLs are bearer credentials. The log agent necessarily needs th
 
 Webhook payloads should disable mention parsing.
 
-## Admin secret display
+## Secret-bearing Discord interactions
 
-The user explicitly allows `.env` contents/public deploy keys/necessary setup secrets to be displayed in **ephemeral admin interactions**. Never expose these in normal channel messages or prefix-command replies.
+`.env` contents, public deploy keys, and necessary setup secrets are displayed only in **ephemeral slash-command interactions**. Never expose these in normal channel messages or prefix-command replies.
 
-Because prefix commands cannot be ephemeral, secret-bearing admin commands remain slash-only.
+`/config ...` remains `ADMIN_IDS`-gated. `/env ...` is deliberately not admin-only: anyone permitted to operate apps from a configured stack command channel (the same trust boundary used by `/update`) may show or modify that stack's app environment. Therefore Discord access to a stack command channel is also access to that stack's application secrets. Keep stack-channel membership/permissions accordingly restrictive.
+
+Because prefix commands cannot be ephemeral, `/env` remains slash-only even though `/update` also has a prefix form.
 
 ## Deployment source archive
 

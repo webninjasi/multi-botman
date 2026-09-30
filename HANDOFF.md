@@ -7,7 +7,7 @@
 - No production deployment exists; backward compatibility is not required.
 - Archived code under `reference/original-ag-botman/` is reference-only.
 - Fresh implementation is active.
-- Current automated suite: **168 passed**.
+- Current automated suite: **170 passed**.
 - Phase 1 is complete.
 - Phase 2 central Compose/lifecycle/Discord core is complete at unit level.
 - Phase 3 central Git + `/update` deployment core and Discord adapter are complete at unit level.
@@ -63,6 +63,9 @@ Slash/admin/ephemeral (stack/app-scoped commands infer the stack from the curren
 - `/config compose upload|show`
 - `/config git setup APP` / `/config git rotate-key APP`
 - `/config agent sync|status`
+
+Slash/ephemeral, stack-channel authorized like `/update` (not `ADMIN_IDS`-gated):
+
 - `/env show|upload|set|unset`
 
 See `VPS_AND_DISCORD_SETUP.md` for the exact onboarding order.

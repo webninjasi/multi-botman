@@ -12,9 +12,9 @@ Implemented and covered by the current automated suite:
 - channel -> stack -> stack-local app -> server routing and command-channel authorization
 - argv-safe local and strictly host-verified SSH/SFTP execution
 - stack-scoped Compose identity, per-stack locks, service-only lifecycle operations
-- runtime-affecting config/Git/env admin mutations share the same stack operation lock
+- runtime-affecting config/Git/env mutations share the same stack operation lock
 - hybrid Discord `/start|stop|restart|status` + prefix equivalents
-- slash-only admin onboarding for servers, stacks, apps, Compose, Git keys, agent sync/status, and env files
+- slash-only admin onboarding for servers, stacks, apps, Compose, Git keys, and agent sync/status; slash-only ephemeral `/env` uses the same stack-channel authorization as `/update`
 - runtime `compose config` validation before atomic Compose activation
 - central Git-over-SSH cache with strict host verification and stack-namespaced per-app deploy keys
 - `/update` + `!update` release staging, checksum verification, atomic `current`, rollback, pruning, deployment thread, and complete transcript attachments
@@ -25,7 +25,7 @@ Implemented and covered by the current automated suite:
 - clean-checkout CI for Python 3.11-3.13, Ruff/mypy quality gates, and wheel-content/entry-point verification
 - target-host preflight CLI for Compose, journald policy/permissions, cysystemd, systemd unit/sudoers, and optional app export checks
 
-The automated suite currently passes **168 tests**.
+The automated suite currently passes **170 tests**.
 
 Still required before calling v1 production-complete:
 

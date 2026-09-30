@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from .commands.admin import register_admin_commands
+from .commands.env import register_env_commands
 from .commands.lifecycle import LifecycleCommandAdapter, register_lifecycle_commands
 from .commands.live_logs import LiveLogsCommandAdapter, register_live_logs_commands
 from .commands.logs import HistoricalLogsCommandAdapter, register_logs_commands
@@ -64,6 +65,7 @@ def create_bot(config_path: str | Path):
         return HistoricalLogsService(store.load_or_default())
 
     register_logs_commands(bot, HistoricalLogsCommandAdapter(historical_logs_service))
+    register_env_commands(bot, store, locks=shared_locks)
     register_admin_commands(
         bot,
         store,

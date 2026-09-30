@@ -23,6 +23,7 @@ Updated 2026-09-30 for the fresh Botman implementation.
 - `src/botman/commands/live_logs.py`
 - `src/botman/commands/logs.py`
 - `src/botman/commands/admin.py`
+- `src/botman/commands/env.py` — slash-only ephemeral env commands authorized by stack channel/app, not `ADMIN_IDS`
 
 ## Target log-agent/export implementation
 
@@ -50,7 +51,7 @@ Updated 2026-09-30 for the fresh Botman implementation.
 - `tests/central/`
 - `tests/agent/`
 
-Current fresh result: **168 passed**.
+Current fresh result: **170 passed**.
 
 ## Operator/design documentation
 

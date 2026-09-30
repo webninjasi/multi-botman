@@ -104,7 +104,7 @@ For every lifecycle/log/update command:
 
 Never search other stacks for a matching app name. `app`, `db`, `worker`, and similar generic names may be reused in different stacks without ambiguity.
 
-Admin commands additionally require the invoking user ID in parsed/whitespace-stripped `ADMIN_IDS`.
+`/config` commands additionally require the invoking user ID in parsed/whitespace-stripped `ADMIN_IDS`. `/env` commands intentionally do not: they use the same configured stack-channel/app authorization boundary as `/update`, while remaining slash-only and ephemeral because they can expose secrets.
 
 The Discord category is organizational. The configured **command channel** is the actual routing/security boundary.
 
@@ -220,7 +220,7 @@ Run `/config app add` in the stack's command channel. The stack is derived from 
 - repo URL
 - branch
 
-The same rule applies to `/config compose upload|show`, `/config git setup APP` and `/config git rotate-key APP`, and `/env ...`: these stack/app-scoped admin commands derive the stack from the current channel.
+The same channel-derived stack rule applies to `/config compose upload|show`, `/config git setup APP`, `/config git rotate-key APP`, and `/env ...`. The `/config` forms remain admin-only; `/env` uses stack-channel authorization like `/update`.
 
 Create/get the app-specific Discord log webhook in the stack command channel. Generate the central repo deploy key during explicit Git setup (or app creation if UX is cleaner) and show only the **public** key ephemerally.
 
@@ -228,7 +228,7 @@ No application deployment happens automatically. Stack-scoped admin mutations th
 
 ## Environment commands
 
-Slash-only, admin-only, ephemeral:
+Slash-only and ephemeral, but **not** `ADMIN_IDS`-gated. Authorization matches `/update`: the invocation channel must be the configured stack channel and the requested app must exist in that stack:
 
 ```text
 /env show APP

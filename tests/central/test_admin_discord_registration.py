@@ -62,7 +62,7 @@ def test_admin_command_groups_register_without_import_time_discord_dependency(
         locks=StackLockRegistry(),
     )
 
-    assert [group.name for group in bot.tree.commands] == ["config", "env"]
+    assert [group.name for group in bot.tree.commands] == ["config"]
     config_group = bot.tree.commands[0]
     assert [child.name for child in config_group.children if isinstance(child, FakeGroup)] == [
         "server",
