@@ -101,7 +101,7 @@ class DeploymentService:
             try:
                 await note(f"fetching {app_name}:{resolved.app.git.branch}")
                 try:
-                    revision = await self.git.fetch(app_name)
+                    revision = await self.git.fetch(resolved)
                 except GitError as exc:
                     raise DeploymentError(f"Git fetch failed: {exc}", transcript) from exc
                 sha = revision.sha
@@ -126,12 +126,12 @@ class DeploymentService:
                 ) as handle:
                     archive_path = Path(handle.name)
                 try:
-                    await self.git.archive(app_name, sha, archive_path)
+                    await self.git.archive(resolved, sha, archive_path)
                     self._validate_archive_paths(archive_path)
                     archive_hash = self._sha256_file(archive_path)
                     await note(f"archive ready sha256={archive_hash}")
 
-                    app_root = self.config.app_release_root(app_name)
+                    app_root = self.config.app_release_root(resolved.stack_name, resolved.name)
                     releases = app_root / "releases"
                     token = uuid.uuid4().hex
                     remote_archive = app_root / f".botman-upload-{token}.tar"
@@ -193,6 +193,7 @@ class DeploymentService:
 
                     metadata = json.dumps(
                         {
+                            "stack": resolved.stack_name,
                             "app": app_name,
                             "repo": resolved.app.git.repo_url,
                             "branch": resolved.app.git.branch,
@@ -282,7 +283,7 @@ class DeploymentService:
                     await executor.run(("rm", "-rf", "--", str(staged)), timeout=60, check=False)
 
     async def _current_target(self, executor: Executor, resolved: ResolvedApp) -> str | None:
-        current = self.config.app_release_root(resolved.name) / "current"
+        current = self.config.app_release_root(resolved.stack_name, resolved.name) / "current"
         result = await executor.run(("readlink", "--", str(current)), timeout=30, check=False)
         if result.ok:
             target = result.stdout.strip()
@@ -407,7 +408,7 @@ class DeploymentService:
         active_sha: str,
         transcript: DeploymentTranscript,
     ) -> None:
-        releases = self.config.app_release_root(resolved.name) / "releases"
+        releases = self.config.app_release_root(resolved.stack_name, resolved.name) / "releases"
         result = await executor.run(
             (
                 "find",

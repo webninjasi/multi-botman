@@ -88,8 +88,8 @@ class AgentConfig(_StrictModel):
     @classmethod
     def validate_app_names(cls, value: dict[str, AgentApp]) -> dict[str, AgentApp]:
         for name in value:
-            if not name or any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789-" for ch in name):
-                raise ValueError(f"unsafe app name: {name!r}")
+            if not name or any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789-." for ch in name):
+                raise ValueError(f"unsafe app key: {name!r}")
         return value
 
 

@@ -7,7 +7,7 @@
 - No production deployment exists; backward compatibility is not required.
 - Archived code under `reference/original-ag-botman/` is reference-only.
 - Fresh implementation is active.
-- Current automated suite: **113 passed**.
+- Current automated suite: **118 passed**.
 - Phase 1 is complete.
 - Phase 2 central Compose/lifecycle/Discord core is complete at unit level.
 - Phase 3 central Git + `/update` deployment core and Discord adapter are complete at unit level.
@@ -28,7 +28,8 @@ One central Discord bot manages Docker/Podman Compose applications across small 
 Read `DECISIONS.md` for full detail. Key constraints:
 
 - Remote management is transient SSH/SFTP with strict host verification.
-- Stack command channel is the lifecycle/log/update authorization boundary.
+- Stack command channel is the lifecycle/log/update authorization boundary; commands resolve channel -> stack before looking up an app.
+- App names are stack-local, not global. Different stacks may both use names such as `app`, `db`, or `worker`.
 - Stack and app are distinct: one stack has one server/channel/Compose project; multiple independently versioned apps may share it.
 - Compose is Botman-managed, not app-repo-owned.
 - Git credentials stay on central; each app gets a separate central deploy key.
@@ -54,7 +55,7 @@ Hybrid slash/prefix:
 - `/logs tail APP [lines]` / prefix equivalent
 - `/logs download APP from_time to_time [human|jsonl]` / prefix equivalent
 
-Slash/admin/ephemeral:
+Slash/admin/ephemeral (stack/app-scoped commands infer the stack from the current channel):
 
 - `/config server add|test`
 - `/config stack add`

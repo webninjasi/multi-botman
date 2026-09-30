@@ -77,7 +77,7 @@ async def test_compose_argv_is_stack_scoped_and_service_scoped() -> None:
     config = config_two_apps()
     executor = RecordingExecutor()
     manager = ComposeManager(config, executor_factory=lambda _: executor)
-    app_a = resolve_app(config, "app-a")
+    app_a = resolve_app(config, "bots", "app-a")
 
     await manager.start(app_a)
     await manager.stop(app_a)
@@ -109,7 +109,7 @@ async def test_configured_podman_compose_prefix_is_preserved() -> None:
     config = config_two_apps(ssh=True)
     executor = RecordingExecutor()
     manager = ComposeManager(config, executor_factory=lambda _: executor)
-    await manager.start(resolve_app(config, "app-a"))
+    await manager.start(resolve_app(config, "bots", "app-a"))
     assert executor.calls[0][:3] == ("sudo", "podman", "compose")
 
 
@@ -138,8 +138,8 @@ async def test_per_stack_lock_serializes_conflicting_app_operations() -> None:
     manager = ComposeManager(config, executor_factory=lambda _: executor)
 
     await asyncio.gather(
-        manager.restart(resolve_app(config, "app-a")),
-        manager.restart(resolve_app(config, "app-b")),
+        manager.restart(resolve_app(config, "bots", "app-a")),
+        manager.restart(resolve_app(config, "bots", "app-b")),
     )
     assert activity in [
         [("start", "svc-a"), ("end", "svc-a"), ("start", "svc-b"), ("end", "svc-b")],

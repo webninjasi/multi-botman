@@ -6,10 +6,10 @@ Updated 2026-09-30 for the fresh Botman implementation.
 
 - `src/botman/models.py` — strict central config model/derived paths
 - `src/botman/config.py` — atomic config persistence/mutation lock
-- `src/botman/routing.py` — app/stack/server resolution and channel authorization
+- `src/botman/routing.py` — channel -> stack -> stack-local app/server resolution and authorization
 - `src/botman/executor.py` — local + strict SSH/SFTP execution
 - `src/botman/compose.py` — stack-scoped Compose/lifecycle/upload validation
-- `src/botman/git.py` — per-app deploy keys and strict central Git cache
+- `src/botman/git.py` — stack-namespaced per-app deploy keys and strict central Git cache
 - `src/botman/deployment.py` — release archive/staging/activation/rollback/pruning
 - `src/botman/env.py` — protected env file show/upload/set/unset
 - `src/botman/admin_config.py` — server/stack/app admin config services
@@ -27,7 +27,7 @@ Updated 2026-09-30 for the fresh Botman implementation.
 ## Target log-agent/export implementation
 
 - `src/botman_agent/config.py` — strict protected agent config
-- `src/botman_agent/state.py` — atomic per-app cursor state/restart decision
+- `src/botman_agent/state.py` — atomic per-stack/app cursor state/restart decision
 - `src/botman_agent/journal.py` — cysystemd 2.x direct async live wrapper
 - `src/botman_agent/formatting.py` — Discord content budgeting/line-aware split
 - `src/botman_agent/discord_sink.py` — backpressured webhook delivery/retry/fatal classification
@@ -47,7 +47,7 @@ Updated 2026-09-30 for the fresh Botman implementation.
 - `tests/central/`
 - `tests/agent/`
 
-Current fresh result: **113 passed**.
+Current fresh result: **118 passed**.
 
 ## Operator/design documentation
 

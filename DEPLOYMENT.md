@@ -17,14 +17,14 @@ Each app has:
 Recommended cache layout:
 
 ```text
-/var/lib/botman/repos/<app>.git
+/var/lib/botman/repos/<stack>/<app>.git
 ```
 
 Use a bare mirror/cache and fetch the configured remote branch on `/update`.
 
 ### Git SSH authentication
 
-Use one read-only SSH deploy key per app/repo on the central VPS.
+Use one read-only SSH deploy key per stack-local app/repo on the central VPS. Cache and key paths are namespaced by stack so generic app names can repeat across stacks.
 
 This removes Git secrets from managed VPSes, but the central machine still must verify the Git provider's SSH host key. Use normal OpenSSH strict host checking and a separately managed `known_hosts` file (for example `/etc/botman/git_known_hosts`). Do not:
 
@@ -116,7 +116,7 @@ This is not a perfect transactional orchestrator, especially if `compose up` fai
 
 A stack's Compose file may contain multiple app services and supporting services.
 
-- `/update app-a` must build/up only app-a's service.
+- `/update app` first resolves the current channel to a stack, then builds/ups only that stack-local app service.
 - Do not run a blanket `compose up` that recreates unrelated services.
 - Default to `--no-deps` for app-specific update/start when appropriate so another service is not silently restarted.
 - Shared dependencies are managed deliberately through Compose configuration, not by auto-deploying every service whenever one repo changes.

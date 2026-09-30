@@ -114,21 +114,21 @@ class AdminConfigService:
         self,
         *,
         name: str,
-        stack: str,
+        channel_id: str | int,
         service: str,
         repo_url: str,
         branch: str = "main",
         log_identifier: str | None = None,
     ) -> None:
         def mutate(config):
-            if name in config.apps:
-                raise ValueError(f"app already exists: {name}")
-            if stack not in config.stacks:
-                raise ValueError(f"unknown stack: {stack}")
-            project = config.stacks[stack].project_name
-            identifier = log_identifier or f"{project}-{name}"
-            config.apps[name] = AppConfig(
-                stack=stack,
+            try:
+                stack_name, stack = config.stack_for_channel(channel_id)
+            except KeyError as exc:
+                raise ValueError("this channel is not configured for a stack") from exc
+            if name in stack.apps:
+                raise ValueError(f"app already exists in stack {stack_name}: {name}")
+            identifier = log_identifier or f"{stack.project_name}-{name}"
+            stack.apps[name] = AppConfig(
                 service=service,
                 log_identifier=identifier,
                 git=GitConfig(repo_url=repo_url, branch=branch),

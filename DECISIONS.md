@@ -20,8 +20,9 @@ This file records the decisions explicitly settled with the user for the fresh i
   - stable Compose project name
   - shared Compose file/location
   - zero or more managed apps/services
-- App commands select the app, never the VPS.
-- The stack command channel is the app-management security boundary. App lifecycle commands invoked elsewhere are rejected. Supporting lifecycle commands from threads is not required for v1.
+- App names are unique only within a stack; different stacks may reuse generic names such as `app`, `db`, and `worker`.
+- App commands select the app within the stack resolved from the current command channel, never the VPS and never by a global app lookup.
+- The stack command channel is the app-management security boundary. An unconfigured channel is rejected. Supporting lifecycle commands from threads is not required for v1.
 
 ## Compose and filesystem
 
@@ -33,7 +34,7 @@ This file records the decisions explicitly settled with the user for the fresh i
 ## Git/deployment
 
 - Git credentials live only on the central VPS.
-- Each app uses its own SSH deploy key stored on the central VPS.
+- Each stack-local app uses its own SSH deploy key stored on the central VPS; key/cache paths are namespaced by stack.
 - Target VPSes do not receive Git deploy keys/PATs and do not need Git provider SSH setup.
 - Because central uses Git-over-SSH, the central bot user still needs normal strict SSH host verification for the Git provider (`known_hosts`). Do not hard-code GitHub host keys in application source.
 - V1 deployment trigger: explicit `/update` / `!update` only.

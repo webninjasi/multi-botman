@@ -72,13 +72,13 @@ async def test_env_service_distinguishes_missing_and_writes_0600() -> None:
     executor = MemoryExecutor()
     service = EnvService(config(), executor_factory=lambda _: executor)
     with pytest.raises(EnvMissingError):
-        await service.show("app-a")
+        await service.show("app-a", 1)
 
-    path = await service.set("app-a", "TOKEN", "secret")
+    path = await service.set("app-a", 1, "TOKEN", "secret")
     assert executor.files[path] == b"TOKEN=secret\n"
     assert executor.modes[path] == 0o600
 
-    shown = await service.show("app-a")
+    shown = await service.show("app-a", 1)
     assert shown.content == "TOKEN=secret\n"
-    await service.unset("app-a", "TOKEN")
+    await service.unset("app-a", 1, "TOKEN")
     assert executor.files[path] == b""

@@ -50,7 +50,9 @@ class LiveLogsService:
     ) -> LiveLogResult:
         # Resolve once before taking the lock so wrong-channel requests fail
         # without waiting behind an unrelated target restart.
-        server_name = self.authorize(app_name, channel_id).server_name
+        initial = self.authorize(app_name, channel_id)
+        server_name = initial.server_name
+        stack_name = initial.stack_name
         async with self.locks.get(server_name):
             previous: LogConfig | None = None
 
@@ -76,7 +78,7 @@ class LiveLogsService:
                 await AgentControlService(self.store.load()).sync(server_name)
             except Exception:
                 assert previous is not None
-                await self._rollback_locked(app_name, previous, server_name)
+                await self._rollback_locked(stack_name, app_name, previous, server_name)
                 raise
         return LiveLogResult(app_name, True, thread_id, subscription_id)
 
@@ -86,7 +88,9 @@ class LiveLogsService:
         app_name: str,
         channel_id: str | int,
     ) -> LiveLogResult:
-        server_name = self.authorize(app_name, channel_id).server_name
+        initial = self.authorize(app_name, channel_id)
+        server_name = initial.server_name
+        stack_name = initial.stack_name
         async with self.locks.get(server_name):
             previous: LogConfig | None = None
 
@@ -109,18 +113,19 @@ class LiveLogsService:
                 await AgentControlService(self.store.load()).sync(server_name)
             except Exception:
                 assert previous is not None
-                await self._rollback_locked(app_name, previous, server_name)
+                await self._rollback_locked(stack_name, app_name, previous, server_name)
                 raise
         return LiveLogResult(app_name, False, None, None)
 
     async def _rollback_locked(
-        self, app_name: str, previous: LogConfig, server_name: str
+        self, stack_name: str, app_name: str, previous: LogConfig, server_name: str
     ) -> None:
         """Restore central and target state while the caller holds server lock."""
 
         def rollback(config):
-            if app_name in config.apps:
-                config.apps[app_name].log = previous.model_copy(deep=True)
+            stack = config.stacks.get(stack_name)
+            if stack is not None and app_name in stack.apps:
+                stack.apps[app_name].log = previous.model_copy(deep=True)
 
         await self.store.mutate(rollback)
         # Best-effort restore of the previous target config/service. Preserve the

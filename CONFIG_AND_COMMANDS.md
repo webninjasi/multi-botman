@@ -33,23 +33,34 @@ stacks:
     channel_id: "123456789012345678"
     project_name: botman-bots
     compose_file: compose.yml
+    apps:
+      app:
+        service: app
+        env_file: env/app.env
+        log_identifier: botman-bots-app
+        git:
+          repo_url: git@github.com:owner/app.git
+          branch: main
+          deploy_key_path: /var/lib/botman/keys/bots/app
+        log:
+          webhook_id: "..."
+          webhook_url: "..."
+          live_enabled: false
+          thread_id: null
+          subscription_id: null
 
-apps:
-  app-a:
-    stack: bots
-    service: app-a
-    env_file: env/app-a.env
-    log_identifier: botman-bots-app-a
-    git:
-      repo_url: git@github.com:owner/app-a.git
-      branch: main
-      deploy_key_path: /home/botman/.ssh/deploy-app-a
-    log:
-      webhook_id: "..."
-      webhook_url: "..."
-      live_enabled: false
-      thread_id: null
-      subscription_id: null
+  website:
+    server: oracle-2
+    channel_id: "223456789012345678"
+    project_name: botman-website
+    compose_file: compose.yml
+    apps:
+      app:  # same generic name is valid because app names are stack-local
+        service: app
+        log_identifier: botman-website-app
+        git:
+          repo_url: git@github.com:owner/website.git
+          branch: main
 ```
 
 Prefer derived standard paths over user-configured absolute paths:
@@ -68,7 +79,7 @@ At load and before save:
 - safe Compose service name
 - channel IDs are numeric strings
 - stack references existing server
-- app references existing stack
+- apps are nested under their owning stack; app names only need to be unique within that stack
 - channel ID should normally be unique per stack
 - project name stable/safe
 - timezone resolvable by `zoneinfo`
@@ -81,12 +92,11 @@ Use atomic replace, restrictive config permissions, and an async mutation lock i
 
 For every lifecycle/log/update command:
 
-1. resolve app
-2. resolve app.stack
-3. compare invocation channel ID to stack.command_channel_id
-4. reject if mismatched
+1. resolve the stack from the invocation channel ID
+2. resolve the requested app name only inside that stack
+3. reject if the channel is not a configured stack channel or the app does not exist in that stack
 
-Do not return the app anyway “for convenience.”
+Never search other stacks for a matching app name. `app`, `db`, `worker`, and similar generic names may be reused in different stacks without ambiguity.
 
 Admin commands additionally require the invoking user ID in parsed/whitespace-stripped `ADMIN_IDS`.
 
@@ -176,13 +186,14 @@ Prefer invocation channel as the stack command channel. Require server and stack
 
 ### App creation
 
-Require:
+Run `/config app add` in the stack's command channel. The stack is derived from that channel; do not ask for a stack argument. Require:
 
-- app name
-- stack
+- app name (unique only within this stack)
 - Compose service name
 - repo URL
 - branch
+
+The same rule applies to `/config compose upload|show`, `/config git setup|rotate-key`, and `/env ...`: these stack/app-scoped admin commands derive the stack from the current channel.
 
 Create/get the app-specific Discord log webhook in the stack command channel. Generate the central repo deploy key during explicit Git setup (or app creation if UX is cleaner) and show only the **public** key ephemerally.
 

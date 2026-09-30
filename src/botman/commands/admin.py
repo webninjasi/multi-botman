@@ -133,7 +133,6 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
     async def app_add(
         interaction: discord.Interaction,
         name: str,
-        stack: str,
         service: str,
         repo_url: str,
         branch: str = "main",
@@ -142,9 +141,11 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
         if not await begin(interaction):
             return
         try:
+            if interaction.channel_id is None:
+                raise ValueError("app creation must be run in a configured stack channel")
             await config_service.add_app(
                 name=name,
-                stack=stack,
+                channel_id=interaction.channel_id,
                 service=service,
                 repo_url=repo_url,
                 branch=branch,
@@ -160,7 +161,6 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
     @compose_group.command(name="upload", description="Validate and install a stack Compose file.")
     async def compose_upload(
         interaction: discord.Interaction,
-        stack: str,
         file: discord.Attachment,
     ):
         if not await begin(interaction):
@@ -170,8 +170,11 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
                 raise ValueError(
                     f"Compose attachment exceeds {MAX_COMPOSE_BYTES}-byte limit"
                 )
+            if interaction.channel_id is None:
+                raise ValueError("Compose upload must be run in a configured stack channel")
             payload = await file.read()
             config = store.load()
+            stack, _ = config.stack_for_channel(interaction.channel_id)
             result = await ComposeAdminService(config, locks=locks).upload(stack, payload)
             normalized = result.stdout.strip()
             message = f"Compose configuration for `{stack}` validated and installed."
@@ -182,11 +185,14 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
             await fail(interaction, exc)
 
     @compose_group.command(name="show", description="Show the currently installed stack Compose file.")
-    async def compose_show(interaction: discord.Interaction, stack: str):
+    async def compose_show(interaction: discord.Interaction):
         if not await begin(interaction):
             return
         try:
+            if interaction.channel_id is None:
+                raise ValueError("Compose show must be run in a configured stack channel")
             config = store.load()
+            stack, _ = config.stack_for_channel(interaction.channel_id)
             content = await ComposeAdminService(config, locks=locks).show(stack)
             if len(content) <= 1600 and "```" not in content:
                 await interaction.followup.send(
@@ -207,7 +213,9 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
         if not await begin(interaction):
             return
         try:
-            public = await git_service.setup(app, replace=False)
+            if interaction.channel_id is None:
+                raise ValueError("Git setup must be run in a configured stack channel")
+            public = await git_service.setup(app, channel_id=interaction.channel_id, replace=False)
             await interaction.followup.send(
                 "Add this public key to the repository as a read-only deploy key, then run `/update`.\n"
                 f"```text\n{public}\n```",
@@ -221,7 +229,9 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
         if not await begin(interaction):
             return
         try:
-            public = await git_service.setup(app, replace=True)
+            if interaction.channel_id is None:
+                raise ValueError("Git rotation must be run in a configured stack channel")
+            public = await git_service.setup(app, channel_id=interaction.channel_id, replace=True)
             await interaction.followup.send(
                 "Deploy key rotated. Replace the repository's old deploy key with this public key "
                 "before the next `/update`.\n"
@@ -276,7 +286,9 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
         if not await begin(interaction):
             return
         try:
-            env_file = await EnvService(store.load()).show(app)
+            if interaction.channel_id is None:
+                raise ValueError("env commands must be run in a configured stack channel")
+            env_file = await EnvService(store.load()).show(app, interaction.channel_id)
             attachment = discord.File(
                 io.BytesIO(env_file.content.encode()), filename=f"{app}.env"
             )
@@ -303,7 +315,9 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
                 raise ValueError(
                     f"environment attachment exceeds {ENV_UPLOAD_MAX_BYTES}-byte limit"
                 )
-            path = await EnvService(store.load()).upload(app, await file.read())
+            if interaction.channel_id is None:
+                raise ValueError("env commands must be run in a configured stack channel")
+            path = await EnvService(store.load()).upload(app, interaction.channel_id, await file.read())
             await interaction.followup.send(
                 f"Environment for `{app}` written to `{path}`. No restart/deploy was performed.",
                 ephemeral=True,
@@ -321,7 +335,9 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
         if not await begin(interaction):
             return
         try:
-            await EnvService(store.load()).set(app, key, value)
+            if interaction.channel_id is None:
+                raise ValueError("env commands must be run in a configured stack channel")
+            await EnvService(store.load()).set(app, interaction.channel_id, key, value)
             await interaction.followup.send(
                 f"`{key}` updated for `{app}`. No restart/deploy was performed.",
                 ephemeral=True,
@@ -334,7 +350,9 @@ def register_admin_commands(bot, store: ConfigStore, *, admin_ids: str | None, l
         if not await begin(interaction):
             return
         try:
-            await EnvService(store.load()).unset(app, key)
+            if interaction.channel_id is None:
+                raise ValueError("env commands must be run in a configured stack channel")
+            await EnvService(store.load()).unset(app, interaction.channel_id, key)
             await interaction.followup.send(
                 f"`{key}` removed from `{app}`. No restart/deploy was performed.",
                 ephemeral=True,

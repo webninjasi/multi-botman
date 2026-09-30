@@ -90,13 +90,14 @@ class HistoricalLogsService:
         if not 1 <= lines <= 500:
             raise ValueError("lines must be between 1 and 500")
         resolved = self.authorize(app_name, channel_id)
+        agent_key = self.config.agent_app_key(resolved.stack_name, resolved.name)
         result = await self.executor_factory(resolved).run(
             [
                 str(LOG_EXPORT_BIN),
                 "--config",
                 str(AGENT_CONFIG_PATH),
                 "--app",
-                app_name,
+                agent_key,
                 "--tail",
                 str(lines),
                 "--format",
@@ -129,6 +130,7 @@ class HistoricalLogsService:
             raise ValueError("to_local must be later than from_local")
 
         executor = self.executor_factory(resolved)
+        agent_key = self.config.agent_app_key(resolved.stack_name, resolved.name)
         read_bytes = getattr(executor, "read_bytes", None)
         if not callable(read_bytes):
             raise HistoricalLogError("target executor cannot download export files")
@@ -140,7 +142,7 @@ class HistoricalLogsService:
                     "--config",
                     str(AGENT_CONFIG_PATH),
                     "--app",
-                    app_name,
+                    agent_key,
                     "--since-utc",
                     utc_cli_time(start),
                     "--until-utc",
@@ -155,7 +157,7 @@ class HistoricalLogsService:
                 timeout=300,
                 check=True,
             )
-            manifest = self._parse_manifest(result.stdout, remote_dir, app_name, format)
+            manifest = self._parse_manifest(result.stdout, remote_dir, agent_key, format)
             artifacts: list[LogArtifact] = []
             for path in manifest["files"]:
                 data = await read_bytes(path)

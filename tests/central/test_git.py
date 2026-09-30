@@ -7,6 +7,7 @@ import pytest
 from botman.executor import ExecResult
 from botman.git import GitError, GitRepositoryManager, git_ssh_environment
 from botman.models import BotmanConfig
+from botman.routing import resolve_app
 
 
 def config(tmp_path: Path) -> BotmanConfig:
@@ -74,7 +75,7 @@ async def test_fetch_uses_exact_branch_refspec_and_resolves_commit(tmp_path: Pat
     runner = RecordingGitRunner()
     manager = GitRepositoryManager(cfg, runner=runner)
 
-    revision = await manager.fetch("app-a")
+    revision = await manager.fetch(resolve_app(cfg, "bots", "app-a"))
 
     assert revision.sha == "a" * 40
     fetch = next(args for args, _ in runner.calls if "fetch" in args)
@@ -88,10 +89,10 @@ async def test_fetch_uses_exact_branch_refspec_and_resolves_commit(tmp_path: Pat
 @pytest.mark.asyncio
 async def test_fetch_requires_deploy_key(tmp_path: Path) -> None:
     cfg = config(tmp_path)
-    cfg.apps["app-a"].git.deploy_key_path = None
+    cfg.stacks["bots"].apps["app-a"].git.deploy_key_path = None
     manager = GitRepositoryManager(cfg, runner=RecordingGitRunner())
     with pytest.raises(GitError, match="no deploy key"):
-        await manager.fetch("app-a")
+        await manager.fetch(resolve_app(cfg, "bots", "app-a"))
 
 
 class KeyCreatingRunner:
@@ -111,9 +112,9 @@ async def test_deploy_key_manager_generates_restrictive_keypair(tmp_path: Path) 
 
     cfg = config(tmp_path)
     manager = DeployKeyManager(cfg, runner=KeyCreatingRunner())
-    private, public = await manager.generate("app-a")
+    private, public = await manager.generate("bots", "app-a")
 
-    assert private == tmp_path / "keys" / "app-a"
+    assert private == tmp_path / "keys" / "bots" / "app-a"
     assert public == "ssh-ed25519 AAAATEST botman"
     assert os.stat(private).st_mode & 0o777 == 0o600
     assert os.stat(Path(f"{private}.pub")).st_mode & 0o777 == 0o644
@@ -125,12 +126,63 @@ async def test_git_admin_setup_persists_generated_private_key_path(tmp_path: Pat
     from botman.git import GitAdminService
 
     cfg = config(tmp_path)
-    cfg.apps["app-a"].git.deploy_key_path = None
+    cfg.stacks["bots"].apps["app-a"].git.deploy_key_path = None
     store = ConfigStore(tmp_path / "config.yaml")
     await store.save(cfg)
 
-    public = await GitAdminService(store, runner=KeyCreatingRunner()).setup("app-a")
+    public = await GitAdminService(store, runner=KeyCreatingRunner()).setup("app-a", channel_id=1)
 
     loaded = store.load()
     assert public.startswith("ssh-ed25519 ")
-    assert loaded.apps["app-a"].git.deploy_key_path == tmp_path / "keys" / "app-a"
+    assert loaded.stacks["bots"].apps["app-a"].git.deploy_key_path == tmp_path / "keys" / "bots" / "app-a"
+
+
+def test_git_cache_and_key_paths_are_stack_namespaced(tmp_path: Path) -> None:
+    from botman.git import DeployKeyManager
+
+    cfg = BotmanConfig.model_validate(
+        {
+            "settings": {
+                "repo_cache_root": str(tmp_path / "repos"),
+                "git_known_hosts": str(tmp_path / "known_hosts"),
+                "deploy_key_root": str(tmp_path / "keys"),
+            },
+            "servers": {"local": {"type": "local"}},
+            "stacks": {
+                "one": {
+                    "server": "local",
+                    "channel_id": "1",
+                    "project_name": "one",
+                    "apps": {
+                        "app": {
+                            "service": "app",
+                            "log_identifier": "one-app",
+                            "git": {"repo_url": "git@example.com:one/app.git"},
+                        }
+                    },
+                },
+                "two": {
+                    "server": "local",
+                    "channel_id": "2",
+                    "project_name": "two",
+                    "apps": {
+                        "app": {
+                            "service": "app",
+                            "log_identifier": "two-app",
+                            "git": {"repo_url": "git@example.com:two/app.git"},
+                        }
+                    },
+                },
+            },
+        }
+    )
+    repos = GitRepositoryManager(cfg, runner=RecordingGitRunner())
+    keys = DeployKeyManager(cfg, runner=KeyCreatingRunner())
+
+    one = resolve_app(cfg, "one", "app")
+    two = resolve_app(cfg, "two", "app")
+    assert repos.repo_path(one) == tmp_path / "repos" / "one" / "app.git"
+    assert repos.repo_path(two) == tmp_path / "repos" / "two" / "app.git"
+    assert repos.repo_path(one) != repos.repo_path(two)
+    assert keys.default_private_path("one", "app") == tmp_path / "keys" / "one" / "app"
+    assert keys.default_private_path("two", "app") == tmp_path / "keys" / "two" / "app"

@@ -55,7 +55,7 @@ Names can change; separation of responsibilities should not.
 - `AppConfig` (+ Git/log/live nested models)
 - strict validation and unknown-key rejection
 - config atomic save, `0600`, mutation lock
-- query helpers: app->stack->server; apps for command channel/server
+- query helpers: channel->stack, then stack-local app->server; apps for command channel/server
 - `ExecResult`
 - `LocalExecutor`
 - `SSHExecutor`
@@ -243,7 +243,7 @@ Provisioning must fail if a critical command fails; no “warning but success”
 ### Implement `botman-log-export`
 
 - same cysystemd journal wrapper
-- app name resolved through protected agent config
+- stack-qualified agent app key resolved through protected agent config
 - realtime seek from UTC timestamps
 - end-time stop
 - human and JSONL gzip output
@@ -313,7 +313,7 @@ Important workflow tests:
 
 All of the following are true:
 
-- lifecycle routing cannot operate an app from the wrong command channel
+- lifecycle routing resolves stack from channel first; identical app names in different stacks remain isolated
 - central SSH and Git SSH verify remote host identity
 - multiple apps sharing a Compose stack deploy independently
 - target VPSes contain no Git provider credential

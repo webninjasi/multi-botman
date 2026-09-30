@@ -285,4 +285,4 @@ async def test_update_and_lifecycle_share_stack_lock_when_registry_is_shared() -
     # is the non-reentrant stack serialization boundary used at runtime.
     assert service.locks is locks
     assert compose.locks is locks
-    assert await locks.get("bots") is await locks.get(resolve_app(cfg, "app-a").stack_name)
+    assert await locks.get("bots") is await locks.get(resolve_app(cfg, "bots", "app-a").stack_name)

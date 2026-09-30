@@ -37,7 +37,7 @@ async def test_admin_onboarding_mutations_build_valid_config(tmp_path: Path) -> 
     await service.add_stack(name="bots", server="vps1", channel_id=1234)
     await service.add_app(
         name="app-a",
-        stack="bots",
+        channel_id=1234,
         service="app-a",
         repo_url="git@github.com:owner/app-a.git",
         branch="main",
@@ -47,8 +47,8 @@ async def test_admin_onboarding_mutations_build_valid_config(tmp_path: Path) -> 
     assert isinstance(config.servers["vps1"], SSHServerConfig)
     assert config.stacks["bots"].channel_id == "1234"
     assert config.stacks["bots"].project_name == "botman-bots"
-    assert config.apps["app-a"].log_identifier == "botman-bots-app-a"
-    assert config.apps["app-a"].git.deploy_key_path is None
+    assert config.stacks["bots"].apps["app-a"].log_identifier == "botman-bots-app-a"
+    assert config.stacks["bots"].apps["app-a"].git.deploy_key_path is None
 
 
 @pytest.mark.asyncio

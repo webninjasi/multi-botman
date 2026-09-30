@@ -9,20 +9,20 @@ Fresh implementation started on 2026-09-30. The archived prototype under `refere
 Implemented and covered by the current automated suite:
 
 - strict Pydantic configuration and atomic `0600` persistence
-- app -> stack -> server routing and command-channel authorization
+- channel -> stack -> stack-local app -> server routing and command-channel authorization
 - argv-safe local and strictly host-verified SSH/SFTP execution
 - stack-scoped Compose identity, per-stack locks, service-only lifecycle operations
 - hybrid Discord `/start|stop|restart|status` + prefix equivalents
 - slash-only admin onboarding for servers, stacks, apps, Compose, Git keys, agent sync/status, and env files
 - runtime `compose config` validation before atomic Compose activation
-- central Git-over-SSH cache with strict host verification and per-app deploy keys
+- central Git-over-SSH cache with strict host verification and stack-namespaced per-app deploy keys
 - `/update` + `!update` release staging, checksum verification, atomic `current`, rollback, pruning, deployment thread, and complete transcript attachments
 - target `botman-log-agent`: cysystemd 2.x direct async journal reading, bounded/backpressured webhook delivery, line-aware Discord formatting, atomic checkpoints, restart/gap policy, and per-app supervision
 - persistent `/livelogs start|stop` with webhook/thread repair, server-scoped synchronization, and rollback on target-agent restart failure
 - `botman-log-export` plus `/logs tail|download` for retained journald history in human or JSONL gzip parts
 - central and agent systemd unit files
 
-The automated suite currently passes **113 tests**.
+The automated suite currently passes **118 tests**.
 
 Still required before calling v1 production-complete:
 
@@ -45,6 +45,10 @@ Read [`VPS_AND_DISCORD_SETUP.md`](VPS_AND_DISCORD_SETUP.md). It distinguishes:
 - manual one-time target log-agent installation, followed by Discord-controlled live/historical logging
 
 A model configuration example is in [`config.example.yaml`](config.example.yaml).
+
+### Config namespace note
+
+Apps are nested under `stacks.<stack>.apps` and their names are only unique inside that stack. Runtime commands always resolve the current Discord channel to a stack before resolving `APP`. Existing config files from the earlier flat `apps:` implementation are accepted as a one-way migration; the next Botman config save writes the corrected nested form.
 
 ## Development
 

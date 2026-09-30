@@ -24,21 +24,22 @@ def render_server_agent_config(config: BotmanConfig, server_name: str) -> bytes:
     if server_name not in config.servers:
         raise KeyError(f"unknown server: {server_name}")
     apps: dict[str, AgentApp] = {}
-    for app_name, app in config.apps.items():
-        stack = config.stacks[app.stack]
+    for stack_name, stack in config.stacks.items():
         if stack.server != server_name:
             continue
-        log = app.log
-        if log.live_enabled:
-            apps[app_name] = AgentApp(
-                identifier=app.log_identifier,
-                enabled=True,
-                webhook_url=log.webhook_url,
-                thread_id=log.thread_id,
-                subscription_id=log.subscription_id,
-            )
-        else:
-            apps[app_name] = AgentApp(identifier=app.log_identifier, enabled=False)
+        for app_name, app in stack.apps.items():
+            agent_key = config.agent_app_key(stack_name, app_name)
+            log = app.log
+            if log.live_enabled:
+                apps[agent_key] = AgentApp(
+                    identifier=app.log_identifier,
+                    enabled=True,
+                    webhook_url=log.webhook_url,
+                    thread_id=log.thread_id,
+                    subscription_id=log.subscription_id,
+                )
+            else:
+                apps[agent_key] = AgentApp(identifier=app.log_identifier, enabled=False)
     agent_config = AgentConfig(
         settings=AgentSettings(
             state_dir=Path("/var/lib/botman-log-agent/state"),

@@ -43,7 +43,7 @@ class FakeExecutor:
             path = f"{out}/app-a.part0001.log.gz"
             self.files[path] = b"gzip-data"
             payload = self.manifest or {
-                "app": "app-a",
+                "app": "s1.app-a",
                 "identifier": "tag-a",
                 "format": "human",
                 "count": 3,
@@ -83,6 +83,7 @@ async def test_tail_uses_protected_helper_path():
     call = executor.calls[0]
     assert call[0] == "/opt/botman-agent/.venv/bin/botman-log-export"
     assert call[call.index("--config") + 1] == "/var/lib/botman-log-agent/config.yaml"
+    assert call[call.index("--app") + 1] == "s1.app-a"
     assert call[call.index("--tail") + 1] == "25"
 
 
@@ -110,7 +111,7 @@ async def test_download_converts_local_time_downloads_and_cleans():
 async def test_download_rejects_manifest_path_escape_and_still_cleans():
     executor = FakeExecutor()
     executor.manifest = {
-        "app": "app-a",
+        "app": "s1.app-a",
         "identifier": "tag-a",
         "format": "human",
         "count": 1,

@@ -11,6 +11,7 @@ from typing import Protocol, Sequence
 
 from .executor import CommandError, CommandTimeout, ExecResult
 from .models import AppConfig, BotmanConfig
+from .routing import ResolvedApp, authorize_app_channel
 
 
 class GitError(RuntimeError):
@@ -103,10 +104,8 @@ class GitRepositoryManager:
         self.config = config
         self.runner = runner or LocalGitRunner()
 
-    def repo_path(self, app_name: str) -> Path:
-        if app_name not in self.config.apps:
-            raise KeyError(f"unknown app: {app_name}")
-        return self.config.settings.repo_cache_root / f"{app_name}.git"
+    def repo_path(self, resolved: ResolvedApp) -> Path:
+        return self.config.settings.repo_cache_root / resolved.stack_name / f"{resolved.name}.git"
 
     def _app_env(self, app: AppConfig) -> dict[str, str]:
         key = app.git.deploy_key_path
@@ -117,35 +116,28 @@ class GitRepositoryManager:
             known_hosts=self.config.settings.git_known_hosts,
         )
 
-    async def fetch(self, app_name: str) -> GitRevision:
-        app = self.config.apps[app_name]
-        repo = self.repo_path(app_name)
+    async def fetch(self, resolved: ResolvedApp) -> GitRevision:
+        app = resolved.app
+        repo = self.repo_path(resolved)
         repo.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         env = self._app_env(app)
 
         if not repo.exists():
             result = await self.runner.run(
                 ("git", "init", "--bare", "--", str(repo)),
-                env=env,
-                timeout=30,
-                check=False,
+                env=env, timeout=30, check=False,
             )
             if not result.ok:
                 raise GitError(result.stderr.strip() or "git init --bare failed")
 
-        # set-url fails when origin doesn't exist; add is then the expected path.
         set_url = await self.runner.run(
             ("git", "--git-dir", str(repo), "remote", "set-url", "origin", app.git.repo_url),
-            env=env,
-            timeout=30,
-            check=False,
+            env=env, timeout=30, check=False,
         )
         if not set_url.ok:
             add = await self.runner.run(
                 ("git", "--git-dir", str(repo), "remote", "add", "origin", app.git.repo_url),
-                env=env,
-                timeout=30,
-                check=False,
+                env=env, timeout=30, check=False,
             )
             if not add.ok:
                 raise GitError(add.stderr.strip() or "unable to configure Git origin")
@@ -154,68 +146,55 @@ class GitRepositoryManager:
         refspec = f"+refs/heads/{app.git.branch}:{remote_ref}"
         fetched = await self.runner.run(
             ("git", "--git-dir", str(repo), "fetch", "--prune", "origin", refspec),
-            env=env,
-            timeout=180,
-            check=False,
+            env=env, timeout=180, check=False,
         )
         if not fetched.ok:
             raise GitError(fetched.stderr.strip() or "git fetch failed")
 
-        resolved = await self.runner.run(
+        resolved_rev = await self.runner.run(
             ("git", "--git-dir", str(repo), "rev-parse", "--verify", f"{remote_ref}^{{commit}}"),
-            env=env,
-            timeout=30,
-            check=False,
+            env=env, timeout=30, check=False,
         )
-        if not resolved.ok:
-            raise GitError(resolved.stderr.strip() or "unable to resolve fetched branch")
-        sha = resolved.stdout.strip().lower()
+        if not resolved_rev.ok:
+            raise GitError(resolved_rev.stderr.strip() or "unable to resolve fetched branch")
+        sha = resolved_rev.stdout.strip().lower()
         if len(sha) not in {40, 64} or any(ch not in "0123456789abcdef" for ch in sha):
             raise GitError(f"Git returned an invalid commit ID: {sha!r}")
         return GitRevision(sha=sha, repo_path=repo)
 
-    async def archive(self, app_name: str, sha: str, destination: Path) -> None:
-        app = self.config.apps[app_name]
-        repo = self.repo_path(app_name)
+    async def archive(self, resolved: ResolvedApp, sha: str, destination: Path) -> None:
+        app = resolved.app
+        repo = self.repo_path(resolved)
         env = self._app_env(app)
         destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         result = await self.runner.run(
-            (
-                "git",
-                "--git-dir",
-                str(repo),
-                "archive",
-                "--format=tar",
-                "-o",
-                str(destination),
-                sha,
-            ),
-            env=env,
-            timeout=120,
-            check=False,
+            ("git", "--git-dir", str(repo), "archive", "--format=tar", "-o", str(destination), sha),
+            env=env, timeout=120, check=False,
         )
         if not result.ok:
             raise GitError(result.stderr.strip() or "git archive failed")
 
 
 class DeployKeyManager:
-    """Generate one Ed25519 read-only deploy keypair path per app."""
+    """Generate one Ed25519 read-only deploy keypair path per stack/app."""
 
     def __init__(self, config: BotmanConfig, *, runner: GitRunner | None = None):
         self.config = config
         self.runner = runner or LocalGitRunner()
 
-    def default_private_path(self, app_name: str) -> Path:
-        if app_name not in self.config.apps:
-            raise KeyError(f"unknown app: {app_name}")
-        return self.config.settings.deploy_key_root / app_name
+    def default_private_path(self, stack_name: str, app_name: str) -> Path:
+        if stack_name not in self.config.stacks or app_name not in self.config.stacks[stack_name].apps:
+            raise KeyError(f"unknown app {app_name!r} in stack {stack_name!r}")
+        return self.config.settings.deploy_key_root / stack_name / app_name
 
-    async def generate(self, app_name: str, *, replace: bool = False) -> tuple[Path, str]:
-        private = self.default_private_path(app_name)
+    async def generate(
+        self, stack_name: str, app_name: str, *, replace: bool = False
+    ) -> tuple[Path, str]:
+        private = self.default_private_path(stack_name, app_name)
         public = Path(f"{private}.pub")
         private.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         if (private.exists() or public.exists()) and not replace:
-            raise GitError(f"deploy key already exists for {app_name}")
+            raise GitError(f"deploy key already exists for {stack_name}/{app_name}")
         if replace:
             private.unlink(missing_ok=True)
             public.unlink(missing_ok=True)
@@ -227,20 +206,11 @@ class DeployKeyManager:
         }
         result = await self.runner.run(
             (
-                "ssh-keygen",
-                "-q",
-                "-t",
-                "ed25519",
-                "-N",
-                "",
-                "-C",
-                f"botman deploy {app_name}",
-                "-f",
-                str(private),
+                "ssh-keygen", "-q", "-t", "ed25519", "-N", "",
+                "-C", f"botman deploy {stack_name}/{app_name}",
+                "-f", str(private),
             ),
-            env=env,
-            timeout=30,
-            check=False,
+            env=env, timeout=30, check=False,
         )
         if not result.ok:
             raise GitError(result.stderr.strip() or "ssh-keygen failed")
@@ -254,19 +224,22 @@ class DeployKeyManager:
 
 
 class GitAdminService:
-    """Config-aware deploy key setup/rotation helper for slash admin commands."""
+    """Config-aware deploy key setup/rotation scoped by Discord stack channel."""
 
     def __init__(self, store, *, runner: GitRunner | None = None):
         self.store = store
         self.runner = runner
 
-    async def setup(self, app_name: str, *, replace: bool = False) -> str:
+    async def setup(
+        self, app_name: str, *, channel_id: str | int, replace: bool = False
+    ) -> str:
         async def mutate(config: BotmanConfig) -> str:
-            if app_name not in config.apps:
-                raise KeyError(f"unknown app: {app_name}")
+            resolved = authorize_app_channel(config, app_name, channel_id)
             manager = DeployKeyManager(config, runner=self.runner)
-            private, public = await manager.generate(app_name, replace=replace)
-            config.apps[app_name].git.deploy_key_path = private
+            private, public = await manager.generate(
+                resolved.stack_name, resolved.name, replace=replace
+            )
+            resolved.app.git.deploy_key_path = private
             return public
 
         _, public = await self.store.mutate(mutate)

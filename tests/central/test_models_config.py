@@ -8,7 +8,7 @@ import pytest
 
 from botman.config import ConfigError, ConfigStore
 from botman.models import BotmanConfig, LocalServerConfig, SSHServerConfig
-from botman.routing import ChannelAuthorizationError, authorize_app_channel
+from botman.routing import ChannelAuthorizationError, UnknownAppError, authorize_app_channel
 
 
 def valid_config_dict() -> dict:
@@ -32,17 +32,16 @@ def valid_config_dict() -> dict:
                 "channel_id": "1234567890",
                 "project_name": "botman-bots",
                 "compose_file": "compose.yml",
-            }
-        },
-        "apps": {
-            "app-a": {
-                "stack": "bots",
-                "service": "app-a",
-                "log_identifier": "botman-bots-app-a",
-                "git": {
-                    "repo_url": "git@github.com:owner/app-a.git",
-                    "branch": "main",
-                    "deploy_key_path": "/home/botman/.ssh/deploy-app-a",
+                "apps": {
+                    "app-a": {
+                        "service": "app-a",
+                        "log_identifier": "botman-bots-app-a",
+                        "git": {
+                            "repo_url": "git@github.com:owner/app-a.git",
+                            "branch": "main",
+                            "deploy_key_path": "/home/botman/.ssh/deploy-app-a",
+                        },
+                    }
                 },
             }
         },
@@ -55,9 +54,9 @@ def test_valid_config_and_derived_paths() -> None:
     assert isinstance(config.servers["remote-1"], SSHServerConfig)
     assert str(config.stack_root("bots")) == "/srv/botman/stacks/bots"
     assert str(config.compose_path("bots")) == "/srv/botman/stacks/bots/compose.yml"
-    assert str(config.app_release_root("app-a")) == "/srv/botman/stacks/bots/apps/app-a"
-    assert str(config.app_env_path("app-a")) == "/srv/botman/stacks/bots/env/app-a.env"
-    assert list(config.apps_for_server("remote-1")) == ["app-a"]
+    assert str(config.app_release_root("bots", "app-a")) == "/srv/botman/stacks/bots/apps/app-a"
+    assert str(config.app_env_path("bots", "app-a")) == "/srv/botman/stacks/bots/env/app-a.env"
+    assert list(config.apps_for_server("remote-1")) == ["bots.app-a"]
     assert list(config.apps_for_channel(1234567890)) == ["app-a"]
 
 
@@ -67,10 +66,10 @@ def test_valid_config_and_derived_paths() -> None:
         (("servers", "bad/name"), {"type": "local", "compose_argv": ["docker", "compose"]}),
         (("stacks", "bots", "channel_id"), "not-numeric"),
         (("stacks", "bots", "project_name"), "../../bad"),
-        (("apps", "app-a", "service"), "app;rm"),
-        (("apps", "app-a", "env_file"), "../secret"),
-        (("apps", "app-a", "log_identifier"), "bad identifier"),
-        (("apps", "app-a", "git", "branch"), "../main"),
+        (("stacks", "bots", "apps", "app-a", "service"), "app;rm"),
+        (("stacks", "bots", "apps", "app-a", "env_file"), "../secret"),
+        (("stacks", "bots", "apps", "app-a", "log_identifier"), "bad identifier"),
+        (("stacks", "bots", "apps", "app-a", "git", "branch"), "../main"),
         (("settings", "timezone"), "Not/A_Zone"),
         (("settings", "release_keep_count"), 0),
     ],
@@ -99,20 +98,15 @@ def test_invalid_ssh_port_and_relative_key_are_rejected() -> None:
 
 def test_unknown_keys_rejected() -> None:
     raw = valid_config_dict()
-    raw["apps"]["app-a"]["surprise"] = True
+    raw["stacks"]["bots"]["apps"]["app-a"]["surprise"] = True
     with pytest.raises(ValueError, match="Extra inputs are not permitted"):
         BotmanConfig.model_validate(raw)
 
 
-def test_unknown_references_rejected() -> None:
+def test_unknown_server_reference_rejected() -> None:
     raw = valid_config_dict()
     raw["stacks"]["bots"]["server"] = "missing"
     with pytest.raises(ValueError, match="unknown server"):
-        BotmanConfig.model_validate(raw)
-
-    raw = valid_config_dict()
-    raw["apps"]["app-a"]["stack"] = "missing"
-    with pytest.raises(ValueError, match="unknown stack"):
         BotmanConfig.model_validate(raw)
 
 
@@ -127,7 +121,46 @@ def test_duplicate_stack_channel_rejected() -> None:
         BotmanConfig.model_validate(raw)
 
 
-def test_channel_routing_rejects_wrong_channel() -> None:
+def test_same_app_names_are_allowed_in_different_stacks_and_channel_selects_stack() -> None:
+    raw = valid_config_dict()
+    raw["stacks"]["other"] = {
+        "server": "local",
+        "channel_id": "222",
+        "project_name": "other",
+        "apps": {
+            "app": {
+                "service": "app",
+                "log_identifier": "other-app",
+                "git": {"repo_url": "git@example.com:other/app.git"},
+            },
+            "db": {
+                "service": "db",
+                "log_identifier": "other-db",
+                "git": {"repo_url": "git@example.com:other/db.git"},
+            },
+        },
+    }
+    raw["stacks"]["bots"]["apps"] = {
+        "app": {
+            "service": "app",
+            "log_identifier": "bots-app",
+            "git": {"repo_url": "git@example.com:bots/app.git"},
+        },
+        "db": {
+            "service": "db",
+            "log_identifier": "bots-db",
+            "git": {"repo_url": "git@example.com:bots/db.git"},
+        },
+    }
+    config = BotmanConfig.model_validate(raw)
+
+    assert authorize_app_channel(config, "app", 1234567890).stack_name == "bots"
+    assert authorize_app_channel(config, "app", 222).stack_name == "other"
+    assert authorize_app_channel(config, "db", 1234567890).app.log_identifier == "bots-db"
+    assert authorize_app_channel(config, "db", 222).app.log_identifier == "other-db"
+
+
+def test_channel_routing_rejects_unconfigured_channel_and_unknown_local_app() -> None:
     config = BotmanConfig.model_validate(valid_config_dict())
     resolved = authorize_app_channel(config, "app-a", "1234567890")
     assert resolved.stack_name == "bots"
@@ -135,6 +168,17 @@ def test_channel_routing_rejects_wrong_channel() -> None:
 
     with pytest.raises(ChannelAuthorizationError):
         authorize_app_channel(config, "app-a", "999999")
+    with pytest.raises(UnknownAppError):
+        authorize_app_channel(config, "missing", "1234567890")
+
+
+def test_legacy_flat_apps_are_migrated_to_nested_stack_schema() -> None:
+    raw = valid_config_dict()
+    app = raw["stacks"]["bots"]["apps"].pop("app-a")
+    raw["apps"] = {"app-a": {"stack": "bots", **app}}
+    config = BotmanConfig.model_validate(raw)
+    assert "app-a" in config.stacks["bots"].apps
+    assert "apps" not in config.model_dump(mode="python")
 
 
 def test_malformed_yaml_fails_clearly(tmp_path: Path) -> None:
@@ -178,6 +222,6 @@ async def test_mutation_lock_prevents_stale_last_writer_race(tmp_path: Path) -> 
 
 def test_git_repo_url_must_use_ssh() -> None:
     raw = valid_config_dict()
-    raw["apps"]["app-a"]["git"]["repo_url"] = "https://github.com/owner/app-a.git"
+    raw["stacks"]["bots"]["apps"]["app-a"]["git"]["repo_url"] = "https://github.com/owner/app-a.git"
     with pytest.raises(ValueError, match="must use SSH"):
         BotmanConfig.model_validate(raw)

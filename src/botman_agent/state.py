@@ -46,8 +46,8 @@ class StateStore:
         self.state_dir = Path(state_dir)
 
     def path_for(self, app_name: str) -> Path:
-        if not app_name or any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789-" for ch in app_name):
-            raise ValueError("unsafe app name")
+        if not app_name or any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789-." for ch in app_name):
+            raise ValueError("unsafe app key")
         return self.state_dir / f"{app_name}.json"
 
     def load(self, app_name: str) -> AppState | None:

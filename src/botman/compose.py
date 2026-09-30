@@ -159,9 +159,7 @@ def validate_compose_yaml(
     if stack_name not in config.stacks:
         raise ComposeValidationError(f"unknown stack: {stack_name}")
 
-    for app_name, app in config.apps.items():
-        if app.stack != stack_name:
-            continue
+    for app_name, app in config.stacks[stack_name].apps.items():
         service = services.get(app.service)
         if not isinstance(service, dict):
             raise ComposeValidationError(
@@ -228,11 +226,10 @@ class ComposeAdminService:
     def _resolved_for_stack(self, stack_name: str) -> ResolvedApp:
         if stack_name not in self.config.stacks:
             raise KeyError(f"unknown stack: {stack_name}")
-        for app_name, app in self.config.apps.items():
-            if app.stack == stack_name:
-                from .routing import resolve_app
+        for app_name in self.config.stacks[stack_name].apps:
+            from .routing import resolve_app
 
-                return resolve_app(self.config, app_name)
+            return resolve_app(self.config, stack_name, app_name)
 
         # A stack may be configured before its first app. Build the minimum
         # resolved shape expected by executor factories using a synthetic app
@@ -242,7 +239,6 @@ class ComposeAdminService:
         from .models import AppConfig, GitConfig
 
         placeholder = AppConfig(
-            stack=stack_name,
             service="botman-placeholder",
             log_identifier=f"botman-{stack_name}-placeholder",
             git=GitConfig(repo_url="ssh://placeholder.invalid/repo.git"),

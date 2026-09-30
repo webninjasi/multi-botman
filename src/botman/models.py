@@ -155,39 +155,6 @@ class SSHServerConfig(_ServerBase):
 ServerConfig = Annotated[LocalServerConfig | SSHServerConfig, Field(discriminator="type")]
 
 
-class StackConfig(StrictModel):
-    server: str
-    channel_id: str
-    project_name: str
-    compose_file: str = "compose.yml"
-
-    @field_validator("server")
-    @classmethod
-    def validate_server_name(cls, value: str) -> str:
-        return _validate_safe_name(value, label="server reference")
-
-    @field_validator("channel_id")
-    @classmethod
-    def validate_channel_id(cls, value: str) -> str:
-        if not value.isdigit():
-            raise ValueError("channel_id must be a numeric Discord ID string")
-        return value
-
-    @field_validator("project_name")
-    @classmethod
-    def validate_project_name(cls, value: str) -> str:
-        if not PROJECT_RE.fullmatch(value):
-            raise ValueError("project_name contains unsupported characters")
-        return value
-
-    @field_validator("compose_file")
-    @classmethod
-    def validate_compose_file(cls, value: str) -> str:
-        if value not in {"compose.yml", "compose.yaml"}:
-            raise ValueError("compose_file must be compose.yml or compose.yaml")
-        return value
-
-
 class GitConfig(StrictModel):
     repo_url: str
     branch: str = "main"
@@ -272,17 +239,11 @@ class LogConfig(StrictModel):
 
 
 class AppConfig(StrictModel):
-    stack: str
     service: str
     env_file: str | None = None
     log_identifier: str
     git: GitConfig
     log: LogConfig = Field(default_factory=LogConfig)
-
-    @field_validator("stack")
-    @classmethod
-    def validate_stack_name(cls, value: str) -> str:
-        return _validate_safe_name(value, label="stack reference")
 
     @field_validator("service")
     @classmethod
@@ -304,42 +265,123 @@ class AppConfig(StrictModel):
         return value
 
 
+class StackConfig(StrictModel):
+    server: str
+    channel_id: str
+    project_name: str
+    compose_file: str = "compose.yml"
+    apps: dict[str, AppConfig] = Field(default_factory=dict)
+
+    @field_validator("server")
+    @classmethod
+    def validate_server_name(cls, value: str) -> str:
+        return _validate_safe_name(value, label="server reference")
+
+    @field_validator("channel_id")
+    @classmethod
+    def validate_channel_id(cls, value: str) -> str:
+        if not value.isdigit():
+            raise ValueError("channel_id must be a numeric Discord ID string")
+        return value
+
+    @field_validator("project_name")
+    @classmethod
+    def validate_project_name(cls, value: str) -> str:
+        if not PROJECT_RE.fullmatch(value):
+            raise ValueError("project_name contains unsupported characters")
+        return value
+
+    @field_validator("compose_file")
+    @classmethod
+    def validate_compose_file(cls, value: str) -> str:
+        if value not in {"compose.yml", "compose.yaml"}:
+            raise ValueError("compose_file must be compose.yml or compose.yaml")
+        return value
+
+    @field_validator("apps")
+    @classmethod
+    def validate_app_names(cls, value: dict[str, AppConfig]) -> dict[str, AppConfig]:
+        for app_name in value:
+            _validate_safe_name(app_name, label="app name")
+        return value
+
+
 class BotmanConfig(StrictModel):
     settings: SettingsConfig = Field(default_factory=SettingsConfig)
     servers: dict[str, ServerConfig] = Field(default_factory=dict)
     stacks: dict[str, StackConfig] = Field(default_factory=dict)
-    apps: dict[str, AppConfig] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_top_level_apps(cls, raw):
+        """Accept v1 flat apps once and normalize them under their owning stack.
+
+        This keeps existing installations bootable after the schema correction.
+        Any subsequent save writes only the nested representation.
+        """
+        if not isinstance(raw, dict) or "apps" not in raw:
+            return raw
+        data = dict(raw)
+        legacy_apps = data.pop("apps")
+        if not legacy_apps:
+            return data
+        if not isinstance(legacy_apps, dict):
+            raise ValueError("legacy top-level apps must be a mapping")
+        stacks = data.get("stacks")
+        if not isinstance(stacks, dict):
+            raise ValueError("legacy apps require a stacks mapping")
+        stacks = {name: dict(value) if isinstance(value, dict) else value for name, value in stacks.items()}
+        for app_name, app_raw in legacy_apps.items():
+            if not isinstance(app_raw, dict):
+                raise ValueError(f"legacy app {app_name!r} must be a mapping")
+            app_data = dict(app_raw)
+            stack_name = app_data.pop("stack", None)
+            if not isinstance(stack_name, str) or stack_name not in stacks:
+                raise ValueError(f"legacy app {app_name!r} references unknown stack {stack_name!r}")
+            stack_raw = stacks[stack_name]
+            if not isinstance(stack_raw, dict):
+                raise ValueError(f"stack {stack_name!r} must be a mapping")
+            nested = dict(stack_raw.get("apps") or {})
+            if app_name in nested:
+                raise ValueError(f"app {app_name!r} is defined twice in stack {stack_name!r}")
+            nested[app_name] = app_data
+            stack_raw["apps"] = nested
+        data["stacks"] = stacks
+        return data
 
     @model_validator(mode="after")
     def validate_relationships(self) -> "BotmanConfig":
         for server_name in self.servers:
             _validate_safe_name(server_name, label="server name")
+        channels: dict[str, str] = {}
+        per_server_log_ids: set[tuple[str, str]] = set()
         for stack_name, stack in self.stacks.items():
             _validate_safe_name(stack_name, label="stack name")
             if stack.server not in self.servers:
                 raise ValueError(
                     f"stack {stack_name!r} references unknown server {stack.server!r}"
                 )
-        channels: dict[str, str] = {}
-        for stack_name, stack in self.stacks.items():
             previous = channels.setdefault(stack.channel_id, stack_name)
             if previous != stack_name:
                 raise ValueError(
                     f"channel_id {stack.channel_id!r} is assigned to both {previous!r} and {stack_name!r}"
                 )
-        per_server_log_ids: set[tuple[str, str]] = set()
-        for app_name, app in self.apps.items():
-            _validate_safe_name(app_name, label="app name")
-            if app.stack not in self.stacks:
-                raise ValueError(f"app {app_name!r} references unknown stack {app.stack!r}")
-            server_name = self.stacks[app.stack].server
-            log_key = (server_name, app.log_identifier)
-            if log_key in per_server_log_ids:
-                raise ValueError(
-                    f"duplicate log_identifier {app.log_identifier!r} on server {server_name!r}"
-                )
-            per_server_log_ids.add(log_key)
+            for app_name, app in stack.apps.items():
+                _validate_safe_name(app_name, label="app name")
+                log_key = (stack.server, app.log_identifier)
+                if log_key in per_server_log_ids:
+                    raise ValueError(
+                        f"duplicate log_identifier {app.log_identifier!r} on server {stack.server!r}"
+                    )
+                per_server_log_ids.add(log_key)
         return self
+
+    def stack_for_channel(self, channel_id: str | int) -> tuple[str, StackConfig]:
+        wanted = str(channel_id)
+        for stack_name, stack in self.stacks.items():
+            if stack.channel_id == wanted:
+                return stack_name, stack
+        raise KeyError(f"no stack is configured for channel: {wanted}")
 
     def stack_root(self, stack_name: str) -> PurePosixPath:
         _validate_safe_name(stack_name, label="stack name")
@@ -350,25 +392,40 @@ class BotmanConfig(StrictModel):
     def compose_path(self, stack_name: str) -> PurePosixPath:
         return self.stack_root(stack_name) / self.stacks[stack_name].compose_file
 
-    def app_release_root(self, app_name: str) -> PurePosixPath:
-        app = self.apps[app_name]
-        return self.stack_root(app.stack) / "apps" / app_name
+    def app_release_root(self, stack_name: str, app_name: str) -> PurePosixPath:
+        if app_name not in self.stacks[stack_name].apps:
+            raise KeyError(f"unknown app {app_name!r} in stack {stack_name!r}")
+        return self.stack_root(stack_name) / "apps" / app_name
 
-    def app_env_path(self, app_name: str) -> PurePosixPath:
-        app = self.apps[app_name]
+    def app_env_path(self, stack_name: str, app_name: str) -> PurePosixPath:
+        app = self.stacks[stack_name].apps[app_name]
         relative = app.env_file or f"env/{app_name}.env"
-        return self.stack_root(app.stack) / PurePosixPath(relative)
+        return self.stack_root(stack_name) / PurePosixPath(relative)
+
+    @staticmethod
+    def agent_app_key(stack_name: str, app_name: str) -> str:
+        _validate_safe_name(stack_name, label="stack name")
+        _validate_safe_name(app_name, label="app name")
+        return f"{stack_name}.{app_name}"
+
+    def iter_apps(self):
+        for stack_name, stack in self.stacks.items():
+            for app_name, app in stack.apps.items():
+                yield stack_name, app_name, app
 
     def apps_for_server(self, server_name: str) -> dict[str, AppConfig]:
         if server_name not in self.servers:
             raise KeyError(f"unknown server: {server_name}")
         return {
-            app_name: app
-            for app_name, app in self.apps.items()
-            if self.stacks[app.stack].server == server_name
+            self.agent_app_key(stack_name, app_name): app
+            for stack_name, stack in self.stacks.items()
+            if stack.server == server_name
+            for app_name, app in stack.apps.items()
         }
 
     def apps_for_channel(self, channel_id: str | int) -> dict[str, AppConfig]:
-        wanted = str(channel_id)
-        stack_names = {name for name, stack in self.stacks.items() if stack.channel_id == wanted}
-        return {name: app for name, app in self.apps.items() if app.stack in stack_names}
+        try:
+            _, stack = self.stack_for_channel(channel_id)
+        except KeyError:
+            return {}
+        return dict(stack.apps)

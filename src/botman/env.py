@@ -9,7 +9,7 @@ from collections.abc import Callable
 
 from .compose import executor_for_resolved_app
 from .models import BotmanConfig
-from .routing import resolve_app
+from .routing import authorize_app_channel
 
 ENV_UPLOAD_MAX_BYTES = 256 * 1024
 ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -68,12 +68,13 @@ class EnvService:
         self.config = config
         self.executor_factory = executor_factory
 
-    def _target(self, app_name: str):
-        resolved = resolve_app(self.config, app_name)
-        return resolved, self.executor_factory(resolved), self.config.app_env_path(app_name)
+    def _target(self, app_name: str, channel_id: str | int):
+        resolved = authorize_app_channel(self.config, app_name, channel_id)
+        path = self.config.app_env_path(resolved.stack_name, resolved.name)
+        return resolved, self.executor_factory(resolved), path
 
-    async def show(self, app_name: str) -> EnvFile:
-        _, executor, path = self._target(app_name)
+    async def show(self, app_name: str, channel_id: str | int) -> EnvFile:
+        _, executor, path = self._target(app_name, channel_id)
         read_bytes = getattr(executor, "read_bytes", None)
         if not callable(read_bytes):
             raise EnvError("executor does not support file reads")
@@ -89,7 +90,7 @@ class EnvService:
             raise EnvError("environment file is not valid UTF-8") from exc
         return EnvFile(content, str(path))
 
-    async def upload(self, app_name: str, data: bytes) -> str:
+    async def upload(self, app_name: str, channel_id: str | int, data: bytes) -> str:
         if len(data) > ENV_UPLOAD_MAX_BYTES:
             raise EnvError(f"environment upload exceeds {ENV_UPLOAD_MAX_BYTES}-byte limit")
         if b"\x00" in data:
@@ -98,7 +99,7 @@ class EnvService:
             data.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise EnvError("environment upload is not valid UTF-8") from exc
-        _, executor, path = self._target(app_name)
+        _, executor, path = self._target(app_name, channel_id)
         await executor.run(("mkdir", "-p", "--", str(path.parent)), timeout=30, check=True)
         write_bytes = getattr(executor, "write_bytes", None)
         if not callable(write_bytes):
@@ -106,15 +107,15 @@ class EnvService:
         await write_bytes(path, data, mode=0o600, atomic=True)
         return str(path)
 
-    async def set(self, app_name: str, key: str, value: str) -> str:
+    async def set(self, app_name: str, channel_id: str | int, key: str, value: str) -> str:
         try:
-            existing = (await self.show(app_name)).content
+            existing = (await self.show(app_name, channel_id)).content
         except EnvMissingError:
             existing = ""
         updated = set_env_value(existing, key, value)
-        return await self.upload(app_name, updated.encode())
+        return await self.upload(app_name, channel_id, updated.encode())
 
-    async def unset(self, app_name: str, key: str) -> str:
-        existing = (await self.show(app_name)).content
+    async def unset(self, app_name: str, channel_id: str | int, key: str) -> str:
+        existing = (await self.show(app_name, channel_id)).content
         updated = unset_env_value(existing, key)
-        return await self.upload(app_name, updated.encode())
+        return await self.upload(app_name, channel_id, updated.encode())

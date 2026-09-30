@@ -56,7 +56,7 @@ live_logs:
   subscription_id: "..."
 ```
 
-Agent state persists per app:
+Agent state persists per stack-local app. The generated agent config uses an internal `<stack>.<app>` key so repeated names on one VPS cannot collide:
 
 ```json
 {
@@ -68,7 +68,7 @@ Agent state persists per app:
 
 ### `/livelogs start APP`
 
-- Must be run in the app's stack command channel.
+- Botman resolves the current channel to the stack, then resolves `APP` only inside that stack.
 - If disabled: create a new public thread, create a new `subscription_id`, enable live logs, rewrite agent config, restart agent.
 - If already enabled: treat the command as **repair/idempotent start**, not “already running” failure.
   - fetch/check configured thread;

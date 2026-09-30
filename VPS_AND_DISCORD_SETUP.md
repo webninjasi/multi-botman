@@ -6,9 +6,11 @@ This is the operator runbook for installing Botman and getting an application to
 
 As of 2026-09-30, the central Discord bot, lifecycle commands, admin onboarding commands, Compose upload/validation, Git deploy-key setup, env management, `/update`, `/livelogs start|stop`, and `/logs tail|download` are implemented and unit-tested. The target `botman-log-agent`, `botman-log-export`, and systemd unit are included. Target OS/package provisioning remains a one-time manual step documented below.
 
-Current automated result: **113 tests passed**. Real VPS Docker/Podman/cysystemd and Discord test-guild acceptance are still required before calling v1 production-complete.
+Current automated result: **118 tests passed**. Real VPS Docker/Podman/cysystemd and Discord test-guild acceptance are still required before calling v1 production-complete.
 
 Do not deploy anything under `reference/`.
+
+If you already created a config with the earlier top-level `apps:` layout, this build loads it and nests each app under its recorded stack in memory. The next config mutation/save rewrites the file in the corrected `stacks.<stack>.apps` layout. App names can then be reused in other stacks.
 
 ## 1. Host roles
 
@@ -54,7 +56,7 @@ In each Botman command channel, grant the bot at least:
 - Manage Webhooks (required for `/livelogs start`)
 - Use Application Commands
 
-The configured stack command channel is a management authorization boundary, not just organization. `/start`, `/stop`, `/restart`, `/status`, and `/update` reject the app from other channels.
+The configured stack command channel is a management authorization boundary, not just organization. Botman resolves the current channel to exactly one stack, then resolves the app name only inside that stack. The same generic app name may therefore be reused safely in different stack channels.
 
 Record the Discord user IDs which may run admin commands. They go in `ADMIN_IDS` as comma-separated numeric IDs.
 
@@ -316,14 +318,13 @@ Provide the stack name and server. `project_name` is optional; Botman derives a 
 
 Provide:
 
-- app name
-- stack name
+- app name (unique only within this stack)
 - exact Compose service name
 - SSH Git URL (`git@host:owner/repo.git` or `ssh://...`)
 - branch
 - optional explicit journald `log_identifier`
 
-Adding the app first is important: Compose validation can then verify that app's service/build context/journald tag.
+The stack is inferred from the channel where `/config app add` is run. Adding the app first is important: Compose validation can then verify that app's service/build context/journald tag.
 
 ### Upload the shared stack Compose file
 
@@ -332,7 +333,7 @@ Adding the app first is important: Compose validation can then verify that app's
 /config compose show
 ```
 
-`/config compose upload` stages the file, validates it statically, runs the target's configured `compose config`, and atomically replaces the stack Compose file only on success. It does **not** deploy/restart applications.
+Run these commands in the stack command channel; no stack argument is required. `/config compose upload` stages the file, validates it statically, runs the target's configured `compose config`, and atomically replaces the stack Compose file only on success. It does **not** deploy/restart applications.
 
 If you previously uploaded Compose before adding all managed apps, upload it again after app creation so those services are validated.
 
@@ -342,7 +343,7 @@ If you previously uploaded Compose before adding all managed apps, upload it aga
 /config git setup
 ```
 
-Botman returns the public Ed25519 key ephemerally. Add **that public key only** to the repository as a read-only deploy key. The private key remains under `/var/lib/botman/keys` on central.
+Run this in the stack command channel. Botman resolves the app inside that stack and returns the public Ed25519 key ephemerally. Add **that public key only** to the repository as a read-only deploy key. The private key is namespaced as `/var/lib/botman/keys/<stack>/<app>` on central.
 
 Key rotation later:
 
@@ -363,7 +364,7 @@ Use any combination:
 /env show APP
 ```
 
-Env writes are atomic and mode `0600`. They never trigger a restart/deploy.
+Run `/env ...` in the stack command channel; the app name is resolved only inside that stack. Env writes are atomic and mode `0600`. They never trigger a restart/deploy.
 
 ### First deployment
 
@@ -379,7 +380,7 @@ or:
 
 The update path:
 
-1. verifies this is the app's command channel
+1. resolves the current command channel to its stack and resolves `APP` only inside that stack
 2. fetches the configured branch over strict Git SSH on central
 3. resolves the exact commit SHA
 4. no-ops if that SHA is already active
@@ -551,13 +552,13 @@ sudo systemctl status botman-log-agent.service --no-pager
 sudo journalctl -u botman-log-agent.service -n 100 --no-pager
 sudo -u botmgr /opt/botman-agent/.venv/bin/botman-log-export \
   --config /var/lib/botman-log-agent/config.yaml \
-  --app APP \
+  --app STACK.APP \
   --tail 5 \
   --format human \
   --stdout
 ```
 
-The last command verifies the management account can read that app's journald tag. Replace `botmgr` with `botman` on a local target.
+The agent/exporter uses an internal stack-qualified key (`STACK.APP`) so repeated app names on one VPS cannot collide. The last command verifies the management account can read that app's journald tag. Replace `botmgr` with `botman` on a local target.
 
 ### 10.6 Start/stop live logs from the app's command channel
 
@@ -609,7 +610,7 @@ For a deployable app, all of these should be true:
 2. Central SSH host verification succeeds for that target.
 3. `/config server test` passes.
 4. `/config stack add` was run in the intended command channel.
-5. `/config app add` exists before final Compose validation.
+5. `/config app add` was run in that stack channel before final Compose validation.
 6. `/config compose upload` succeeds against the target runtime.
 7. `/config git setup` public key is installed read-only in the repository.
 8. Git-provider host key exists in `/etc/botman/git_known_hosts` on central.

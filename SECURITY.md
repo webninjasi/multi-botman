@@ -3,7 +3,7 @@
 ## Primary boundaries
 
 1. Discord channel/category permissions decide who can reach an app's command channel.
-2. Botman enforces app -> stack -> command-channel routing on every user lifecycle/log/deployment command.
+2. Botman resolves command channel -> stack first, then resolves the app only inside that stack for every lifecycle/log/deployment command.
 3. `ADMIN_IDS` is an additional explicit gate for config/env/server management.
 4. Central SSH access is the management transport; no new network management ports are exposed.
 5. The log agent holds only what it needs for logging (journal mapping + active Discord webhook credentials), never Git credentials.
@@ -36,7 +36,7 @@ Do not automatically trust `ssh-keyscan` output in code.
 
 ## Git provider SSH
 
-Each app gets a separate central read-only deploy key.
+Each stack-local app gets a separate central read-only deploy key; key/cache paths are namespaced by stack so repeated app names cannot collide.
 
 Server authenticity is separately verified using OpenSSH `known_hosts` on the central VPS. Deploy keys answer “is this client allowed to read the repo?”; host keys answer “is this really the Git server?”. Both are needed for Git-over-SSH.
 

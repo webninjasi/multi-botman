@@ -6,12 +6,13 @@ The archived tests are not the acceptance suite for the fresh implementation.
 
 - safe identifiers accepted; traversal/metacharacters rejected where identifiers are required
 - unknown YAML keys rejected
-- invalid server/stack/app references rejected
+- invalid server/stack structure rejected
 - timezone validation
 - `ADMIN_IDS` whitespace stripped
 - config atomic save + permissions
 - config mutation lock prevents last-writer races in concurrent interactions
-- app command-channel authorization rejects wrong channel
+- command channel resolves exactly one stack; app lookup is restricted to that stack
+- duplicate app names across different stacks are accepted and resolve independently
 
 ## Unit — executor
 
@@ -142,4 +143,5 @@ Do not assume exact HTTP error classification until these tests establish it aga
 - deliberately make `compose up` fail and inspect rollback result
 - rotate app source through several releases and verify cleanup
 - run simultaneous commands in same stack to verify locking
-- verify wrong Discord channel cannot control app by typing known app name
+- verify an unconfigured Discord channel cannot control an app
+- verify the same generic app name in two configured stack channels controls only that channel's stack-local app

@@ -50,12 +50,12 @@ def config():
 
 def test_agent_config_contains_only_server_apps_and_only_active_secret():
     raw = yaml.safe_load(render_server_agent_config(config(), "vps1"))
-    assert set(raw["apps"]) == {"app-a", "app-b"}
-    assert raw["apps"]["app-a"]["webhook_url"] == "https://discord.example/a"
-    assert raw["apps"]["app-a"]["identifier"] == "tag-a"
+    assert set(raw["apps"]) == {"s1.app-a", "s1.app-b"}
+    assert raw["apps"]["s1.app-a"]["webhook_url"] == "https://discord.example/a"
+    assert raw["apps"]["s1.app-a"]["identifier"] == "tag-a"
     assert raw["settings"]["state_dir"] == "/var/lib/botman-log-agent/state"
-    assert raw["apps"]["app-b"] == {"identifier": "tag-b", "enabled": False}
-    assert "app-c" not in raw["apps"]
+    assert raw["apps"]["s1.app-b"] == {"identifier": "tag-b", "enabled": False}
+    assert "s2.app-c" not in raw["apps"]
 
 
 class Executor:
@@ -82,3 +82,41 @@ async def test_sync_writes_protected_config_and_restarts(monkeypatch):
     assert executor.writes[0][0] == "/var/lib/botman-log-agent/config.yaml"
     assert executor.writes[0][2] == 0o640
     assert ("sudo", "-n", "systemctl", "restart", "botman-log-agent.service") in executor.calls
+
+
+def test_agent_config_namespaces_duplicate_app_names_across_stacks_on_same_server():
+    cfg = BotmanConfig.model_validate(
+        {
+            "servers": {"vps1": {"type": "local"}},
+            "stacks": {
+                "one": {
+                    "server": "vps1",
+                    "channel_id": "10",
+                    "project_name": "one",
+                    "apps": {
+                        "app": {
+                            "service": "app",
+                            "log_identifier": "one-app",
+                            "git": {"repo_url": "git@example.com:one/app.git"},
+                        }
+                    },
+                },
+                "two": {
+                    "server": "vps1",
+                    "channel_id": "20",
+                    "project_name": "two",
+                    "apps": {
+                        "app": {
+                            "service": "app",
+                            "log_identifier": "two-app",
+                            "git": {"repo_url": "git@example.com:two/app.git"},
+                        }
+                    },
+                },
+            },
+        }
+    )
+    raw = yaml.safe_load(render_server_agent_config(cfg, "vps1"))
+    assert set(raw["apps"]) == {"one.app", "two.app"}
+    assert raw["apps"]["one.app"]["identifier"] == "one-app"
+    assert raw["apps"]["two.app"]["identifier"] == "two-app"

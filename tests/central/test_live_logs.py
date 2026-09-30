@@ -38,7 +38,7 @@ class AgentControl:
         self.config = config
 
     async def sync(self, server_name):
-        self.__class__.calls.append((server_name, self.config.apps["app-a"].log.live_enabled))
+        self.__class__.calls.append((server_name, self.config.stacks["s1"].apps["app-a"].log.live_enabled))
         if self.__class__.fail:
             raise RuntimeError("agent restart failed")
 
@@ -61,7 +61,7 @@ async def test_live_start_persists_then_syncs(monkeypatch, tmp_path):
     )
     assert result.enabled
     loaded = ConfigStore(path).load()
-    assert loaded.apps["app-a"].log.live_enabled
+    assert loaded.stacks["s1"].apps["app-a"].log.live_enabled
     assert AgentControl.calls == [("vps1", True)]
 
 
@@ -83,7 +83,7 @@ async def test_agent_sync_failure_rolls_back_central_state(monkeypatch, tmp_path
             subscription_id="sub",
         )
     loaded = ConfigStore(path).load()
-    assert not loaded.apps["app-a"].log.live_enabled
+    assert not loaded.stacks["s1"].apps["app-a"].log.live_enabled
 
 
 @pytest.mark.asyncio
@@ -145,8 +145,8 @@ apps:
         async def sync(self, server_name):
             snapshots.append(
                 (
-                    self.config.apps["app-a"].log.live_enabled,
-                    self.config.apps["app-b"].log.live_enabled,
+                    self.config.stacks["s1"].apps["app-a"].log.live_enabled,
+                    self.config.stacks["s1"].apps["app-b"].log.live_enabled,
                 )
             )
             if len(snapshots) == 1:
@@ -184,8 +184,8 @@ apps:
     # The second central mutation must not commit while the first server-wide
     # config is still being synchronized.
     mid = ConfigStore(path).load()
-    assert mid.apps["app-a"].log.live_enabled
-    assert not mid.apps["app-b"].log.live_enabled
+    assert mid.stacks["s1"].apps["app-a"].log.live_enabled
+    assert not mid.stacks["s1"].apps["app-b"].log.live_enabled
 
     release.set()
     await asyncio.gather(first, second)
