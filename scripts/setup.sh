@@ -222,6 +222,47 @@ PY
   return 1
 }
 
+install_supported_python() {
+  find_python >/dev/null 2>&1 && return 0
+
+  log "Python 3.11+ is not installed; installing a supported interpreter"
+
+  if command -v apt-get >/dev/null 2>&1; then
+    local version package
+    for version in 3.13 3.12 3.11; do
+      package="python${version}"
+      if apt-cache show "$package" >/dev/null 2>&1; then
+        apt-get install -y "$package" "${package}-venv" "${package}-dev"
+        find_python >/dev/null 2>&1 && return 0
+      fi
+    done
+
+    if [[ -r /etc/os-release ]]; then
+      # shellcheck disable=SC1091
+      . /etc/os-release
+      if [[ "${ID:-}" == "ubuntu" ]]; then
+        log "Ubuntu repositories do not provide Python 3.11+; enabling deadsnakes PPA"
+        apt-get install -y software-properties-common
+        add-apt-repository -y ppa:deadsnakes/ppa
+        apt-get update
+        apt-get install -y python3.11 python3.11-venv python3.11-dev
+        find_python >/dev/null 2>&1 && return 0
+      fi
+    fi
+  elif command -v dnf >/dev/null 2>&1; then
+    local version package
+    for version in 3.13 3.12 3.11; do
+      package="python${version}"
+      if dnf -q list --available "$package" >/dev/null 2>&1 || dnf -q list --installed "$package" >/dev/null 2>&1; then
+        dnf install -y "$package" "${package}-devel" || dnf install -y "$package"
+        find_python >/dev/null 2>&1 && return 0
+      fi
+    done
+  fi
+
+  return 1
+}
+
 ensure_user() {
   local user="$1" shell="$2" home="$3"
   if ! id "$user" >/dev/null 2>&1; then
@@ -463,7 +504,8 @@ fi
 
 detect_existing_runtime
 ensure_target_runtime
-PYTHON=$(find_python) || fail "Python 3.11+ is required; install it and rerun (or set PYTHON_BIN=/path/to/python)"
+install_supported_python || fail "Python 3.11+ is required and setup could not install it; install Python 3.11+ manually or set PYTHON_BIN=/path/to/python"
+PYTHON=$(find_python) || fail "Python 3.11+ detection failed after installation"
 log "Using Python: $PYTHON ($($PYTHON --version 2>&1))"
 
 if has_target && command -v dnf >/dev/null 2>&1; then

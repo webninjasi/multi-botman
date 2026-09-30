@@ -56,3 +56,18 @@ def test_setup_supports_explicit_runtime_override() -> None:
     assert "--runtime auto|docker|podman" in script
     assert '--runtime) RUNTIME="${2:?missing value for --runtime}"' in script
     assert 'echo "--runtime must be auto, docker, or podman"' in script
+
+
+def test_setup_installs_python_311_plus_instead_of_only_generic_python3() -> None:
+    script = _script()
+    assert "install_supported_python()" in script
+    assert 'for version in 3.13 3.12 3.11' in script
+    assert 'apt-get install -y "$package" "${package}-venv" "${package}-dev"' in script
+    assert 'install_supported_python || fail' in script
+
+
+def test_setup_has_ubuntu_fallback_when_stock_python_is_too_old() -> None:
+    script = _script()
+    assert '[[ "${ID:-}" == "ubuntu" ]]' in script
+    assert 'add-apt-repository -y ppa:deadsnakes/ppa' in script
+    assert 'apt-get install -y python3.11 python3.11-venv python3.11-dev' in script
