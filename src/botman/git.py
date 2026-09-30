@@ -43,7 +43,7 @@ class LocalGitRunner:
         check: bool = False,
     ) -> ExecResult:
         args = tuple(os.fspath(arg) for arg in argv)
-        if not args or any(not arg or "\x00" in arg for arg in args):
+        if not args or not args[0] or any("\x00" in arg for arg in args):
             raise ValueError("invalid Git argv")
         proc = await asyncio.create_subprocess_exec(
             *args,

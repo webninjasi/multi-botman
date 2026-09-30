@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from botman.executor import ExecResult
-from botman.git import GitError, GitRepositoryManager, git_ssh_environment
+from botman.git import GitError, GitRepositoryManager, LocalGitRunner, git_ssh_environment
 from botman.models import BotmanConfig
 from botman.routing import resolve_app
 
@@ -56,6 +56,33 @@ class RecordingGitRunner:
         if args[-4:-2] == ("remote", "set-url") or ("remote" in args and "set-url" in args):
             return ExecResult(args, 0, "", "")
         return ExecResult(args, 0, "", "")
+
+
+@pytest.mark.asyncio
+async def test_local_git_runner_allows_empty_non_executable_argument() -> None:
+    import sys
+
+    runner = LocalGitRunner()
+    result = await runner.run(
+        (
+            sys.executable,
+            "-c",
+            "import sys; assert sys.argv[1] == ''",
+            "",
+        ),
+        env={"PATH": "/usr/bin:/bin"},
+        check=False,
+    )
+
+    assert result.ok
+
+
+@pytest.mark.asyncio
+async def test_local_git_runner_rejects_empty_executable() -> None:
+    runner = LocalGitRunner()
+
+    with pytest.raises(ValueError, match="invalid Git argv"):
+        await runner.run(("", "arg"), env={"PATH": "/usr/bin:/bin"})
 
 
 def test_git_ssh_environment_forces_strict_host_verification(tmp_path: Path) -> None:

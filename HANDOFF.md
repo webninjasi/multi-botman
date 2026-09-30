@@ -85,3 +85,8 @@ Do **not** repair or reuse archived `py/agent/log_agent.py` or deployment code a
 - Put detailed rationale in subsystem docs.
 - Record deferred work in `ROADMAP.md`.
 - Do not call v1 complete until `TEST_PLAN.md` real integration/failure drills pass.
+
+
+## 2026-09-30 deploy-key setup fix
+
+`/config git setup` previously failed before launching `ssh-keygen` because `LocalGitRunner` rejected the intentional empty passphrase argument in `ssh-keygen -N ""`. The validator now allows empty non-executable arguments while still rejecting an empty executable and NUL bytes. `reference/` is now ignored by Git.

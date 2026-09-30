@@ -149,3 +149,11 @@ The log-agent is intentionally a fresh implementation; no `journalctl` subproces
 - Added one-way loading support for the earlier flat top-level `apps:` schema; the next config save writes the corrected nested representation.
 - Added regression coverage for duplicate `app`/`db` names across stacks, Discord command registration, Git/key paths, and target agent config.
 - Automated suite reached 118 passing tests.
+
+
+## Git deploy-key argv validation fix (2026-09-30)
+
+- Fixed `LocalGitRunner` so legitimate empty subprocess arguments are allowed, including the required `ssh-keygen -N ""` used by `/config git setup`.
+- Empty executable names and NUL-containing arguments remain rejected.
+- Added regression coverage for both behaviors.
+- Added `reference/` to `.gitignore`.
