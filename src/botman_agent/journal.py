@@ -62,7 +62,7 @@ class CysystemdJournalStream:
         mode, rule_type, factory = self._load_api()
         reader = factory()
         try:
-            await _maybe_await(reader.open(mode.SYSTEM))
+            await _maybe_await(reader.open(mode.LOCAL_ONLY))
             await _maybe_await(reader.add_filter(rule_type("SYSLOG_IDENTIFIER", self.identifier)))
             # Full MESSAGE data is required so the formatter, rather than libsystemd,
             # owns Discord-only truncation behavior.
@@ -78,7 +78,7 @@ class CysystemdJournalStream:
         mode, rule_type, factory = self._load_api()
         reader = factory()
         try:
-            await _maybe_await(reader.open(mode.SYSTEM))
+            await _maybe_await(reader.open(mode.LOCAL_ONLY))
             await _maybe_await(reader.add_filter(rule_type("SYSLOG_IDENTIFIER", self.identifier)))
             reader.data_threshold = 0
             # cysystemd 2.x expects a bytes cursor, while checkpoints are stored as text.

@@ -92,7 +92,7 @@ class CysystemdHistoricalReader:
     def _open(self) -> Any:
         mode, rule_type, factory = self._load_api()
         reader = factory()
-        reader.open(mode.SYSTEM)
+        reader.open(mode.LOCAL_ONLY)
         reader.add_filter(rule_type("SYSLOG_IDENTIFIER", self.identifier))
         reader.data_threshold = 0
         return reader
