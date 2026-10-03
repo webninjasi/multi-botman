@@ -81,7 +81,8 @@ class CysystemdJournalStream:
             await _maybe_await(reader.open(mode.SYSTEM))
             await _maybe_await(reader.add_filter(rule_type("SYSLOG_IDENTIFIER", self.identifier)))
             reader.data_threshold = 0
-            await _maybe_await(reader.seek_cursor(cursor))
+            # cysystemd 2.x expects a bytes cursor, while checkpoints are stored as text.
+            await _maybe_await(reader.seek_cursor(cursor.encode("utf-8")))
         except Exception:
             await self._close_reader(reader)
             raise

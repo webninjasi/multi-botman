@@ -40,6 +40,8 @@ class Reader:
         self.seek = ("tail", None)
 
     async def seek_cursor(self, cursor):
+        if not isinstance(cursor, bytes):
+            raise TypeError("Argument 'cursor' has incorrect type (expected bytes, got str)")
         self.seek = ("cursor", cursor)
 
     def __aiter__(self):
@@ -78,6 +80,7 @@ async def test_cursor_checkpoint_itself_is_skipped_once():
     )
     await stream.open_cursor("c1")
     rows = [row async for row in stream.records()]
+    assert reader.seek == ("cursor", b"c1")
     assert [r.cursor for r in rows] == ["c2"]
 
 
