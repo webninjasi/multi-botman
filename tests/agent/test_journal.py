@@ -58,11 +58,11 @@ class Reader:
 async def test_journal_stream_filters_and_tail_opens_without_queue():
     reader = Reader([Entry(b"c1", "hello", 5)])
     stream = CysystemdJournalStream(
-        "tag-a", reader_factory=lambda: reader, api=(SimpleNamespace(SYSTEM="system"), Rule)
+        "tag-a", reader_factory=lambda: reader, api=(SimpleNamespace(LOCAL_ONLY="local_only"), Rule)
     )
     await stream.open_tail()
     rows = [row async for row in stream.records()]
-    assert reader.opened == "system"
+    assert reader.opened == "local_only"
     assert (reader.filter.field, reader.filter.value) == ("SYSLOG_IDENTIFIER", "tag-a")
     assert reader.data_threshold == 0
     assert reader.seek == ("tail", None)
@@ -76,7 +76,7 @@ async def test_journal_stream_filters_and_tail_opens_without_queue():
 async def test_cursor_checkpoint_itself_is_skipped_once():
     reader = Reader([Entry("c1", "duplicate", 1), Entry("c2", "next", 2)])
     stream = CysystemdJournalStream(
-        "tag-a", reader_factory=lambda: reader, api=(SimpleNamespace(SYSTEM="system"), Rule)
+        "tag-a", reader_factory=lambda: reader, api=(SimpleNamespace(LOCAL_ONLY="local_only"), Rule)
     )
     await stream.open_cursor("c1")
     rows = [row async for row in stream.records()]
@@ -92,7 +92,7 @@ async def test_failed_cursor_seek_closes_partially_opened_reader():
 
     reader = FailingReader([])
     stream = CysystemdJournalStream(
-        "tag-a", reader_factory=lambda: reader, api=(SimpleNamespace(SYSTEM="system"), Rule)
+        "tag-a", reader_factory=lambda: reader, api=(SimpleNamespace(LOCAL_ONLY="local_only"), Rule)
     )
 
     with pytest.raises(RuntimeError, match="cursor unavailable"):

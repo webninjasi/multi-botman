@@ -22,8 +22,8 @@ def create_bot(config_path: str | Path):
     """Create the discord.py Bot without connecting it to Discord."""
 
     try:
-        import discord  # type: ignore[import-not-found]
-        from discord.ext import commands  # type: ignore[import-not-found]
+        import discord
+        from discord.ext import commands
     except ImportError as exc:  # pragma: no cover - depends on runtime installation.
         raise RuntimeError("discord.py is required to run Botman") from exc
 

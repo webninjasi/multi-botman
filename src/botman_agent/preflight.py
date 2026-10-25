@@ -160,8 +160,8 @@ def _check_cysystemd() -> CheckResult:
     try:
         version = importlib.metadata.version("cysystemd")
         major = int(version.split(".", 1)[0])
-        from cysystemd.async_reader import AsyncJournalReader  # type: ignore[import-not-found]
-        from cysystemd.reader import JournalOpenMode, JournalReader, Rule  # type: ignore[import-not-found]
+        from cysystemd.async_reader import AsyncJournalReader
+        from cysystemd.reader import JournalOpenMode, JournalReader, Rule
     except (ImportError, importlib.metadata.PackageNotFoundError, ValueError) as exc:
         return CheckResult("cysystemd", False, f"unavailable: {exc}")
     if major != 2:
@@ -173,7 +173,7 @@ def _check_cysystemd() -> CheckResult:
 
 def _check_journal_open() -> CheckResult:
     try:
-        from cysystemd.reader import JournalOpenMode, JournalReader  # type: ignore[import-not-found]
+        from cysystemd.reader import JournalOpenMode, JournalReader
 
         reader = JournalReader()
         reader.open(JournalOpenMode.SYSTEM)

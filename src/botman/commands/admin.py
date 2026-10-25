@@ -1,5 +1,6 @@
 """Slash-only, ephemeral administrator commands for onboarding/configuration."""
 
+import io
 from typing import Literal
 
 from ..admin import parse_admin_ids
@@ -25,8 +26,8 @@ def register_admin_commands(
 ):
     """Register administrator-only `/config ...` application-command groups."""
 
-    import discord  # type: ignore[import-not-found]
-    from discord import app_commands  # type: ignore[import-not-found]
+    import discord
+    from discord import app_commands
 
     guard = AdminGuard(parse_admin_ids(admin_ids))
     config_service = AdminConfigService(store, locks=locks)

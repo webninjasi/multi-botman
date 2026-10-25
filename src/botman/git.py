@@ -57,6 +57,7 @@ class LocalGitRunner:
             proc.kill()
             await proc.wait()
             raise CommandTimeout(args, timeout if timeout is not None else 0.0) from exc
+        assert proc.returncode is not None  # communicate() waits for exit
         result = ExecResult(
             args,
             proc.returncode,

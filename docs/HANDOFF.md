@@ -15,11 +15,11 @@
 - Phase 5 central live-log control is implemented; repeatable Docker/Podman-aware target provisioning now exists in `scripts/setup.sh`, with manual alternatives documented.
 - Phase 6 historical exporter plus `/logs tail|download` is implemented and unit-tested.
 - Phase 7 env/config onboarding, including conservative server/stack/app edit UX, is implemented.
-- Phase 8 packaging/docs are in progress; central/agent units, clean-checkout CI, wheel-content verification, target-host preflight, and Ruff/mypy CI gates exist. Real-host acceptance remains.
+- Phase 8 packaging/docs are in progress; central/agent units, clean-checkout CI, wheel-content verification, target-host preflight, and Ruff/mypy CI gates exist. Ruff and mypy pass locally as of 2026-10-26. Real-host acceptance remains.
 
 Real Docker, Podman, cysystemd/journald, and Discord test-guild acceptance have not yet been run in this build environment.
 
-Known test debt: the journal/export test doubles predate the `LOCAL_ONLY` open mode and fail until updated (see [`history/2026-10-03-1025-journal-local-only-open-mode.md`](history/2026-10-03-1025-journal-local-only-open-mode.md)).
+The test suite is Linux-only: on Windows, POSIX path, timezone, `fchmod`, and `grp` tests fail. Use CI as the source of truth.
 
 ## Documentation map
 
@@ -98,13 +98,12 @@ See [`VPS_AND_DISCORD_SETUP.md`](VPS_AND_DISCORD_SETUP.md) for the exact onboard
 
 ## Immediate next work
 
-1. Update the journal/export test doubles for `LOCAL_ONLY`, then run the full suite on Linux.
-2. Run the configured `python -m ruff check src tests scripts` and `python -m mypy src` gates in CI and resolve any first-run findings.
-3. Run `botman-target-preflight` on each real target, then run actual Linux/cysystemd integration for the live reader and historical exporter, including retained-history and journal-permission checks.
-4. Run real Docker and Podman Compose deployment/lifecycle/failure acceptance.
-5. Run a Discord test-guild acceptance pass for hybrid command registration, threads, webhooks, upload limits, archived/locked thread behavior, and live-log batching cadence against webhook rate limits.
-6. Exercise `scripts/setup.sh` and `scripts/update.sh` on the real central and second target VPS, including reboot persistence of the rootless Podman socket.
-7. Reconcile runtime-specific findings before v1 completion.
+1. Confirm CI is green on Linux (tests on 3.11-3.13, Ruff, mypy) and record the new test count here.
+2. Run `botman-target-preflight` on each real target, then run actual Linux/cysystemd integration for the live reader and historical exporter, including retained-history and journal-permission checks.
+3. Run real Docker and Podman Compose deployment/lifecycle/failure acceptance.
+4. Run a Discord test-guild acceptance pass for hybrid command registration, threads, webhooks, upload limits, archived/locked thread behavior, and live-log batching cadence against webhook rate limits.
+5. Exercise `scripts/setup.sh` and `scripts/update.sh` on the real central and second target VPS, including reboot persistence of the rootless Podman socket.
+6. Reconcile runtime-specific findings before v1 completion.
 
 Do **not** repair or reuse archived `py/agent/log_agent.py` or deployment code as the implementation baseline.
 

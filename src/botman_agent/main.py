@@ -72,7 +72,7 @@ async def run_agent(config: AgentConfig, *, session) -> None:
 
 async def _async_main(config_path: Path) -> None:
     try:
-        import aiohttp  # type: ignore[import-not-found]
+        import aiohttp
     except ImportError as exc:  # pragma: no cover - runtime dependency.
         raise RuntimeError("aiohttp is required to run botman-log-agent") from exc
 

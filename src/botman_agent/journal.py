@@ -45,8 +45,8 @@ class CysystemdJournalStream:
             mode, rule = self._api
             return mode, rule, self._reader_factory
         try:
-            from cysystemd.async_reader import AsyncJournalReader  # type: ignore[import-not-found]
-            from cysystemd.reader import JournalOpenMode, Rule  # type: ignore[import-not-found]
+            from cysystemd.async_reader import AsyncJournalReader
+            from cysystemd.reader import JournalOpenMode, Rule
         except ImportError as exc:  # pragma: no cover - Linux runtime dependency.
             raise JournalUnavailableError(
                 "cysystemd 2.x is required to run the Botman log agent"

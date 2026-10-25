@@ -94,7 +94,7 @@ def present_exec_result(
 def bytes_file(data: bytes, filename: str):
     """Create a discord.File lazily so formatter unit tests need no Discord import."""
 
-    import discord  # type: ignore[import-not-found]
+    import discord
 
     return discord.File(io.BytesIO(data), filename=filename)
 

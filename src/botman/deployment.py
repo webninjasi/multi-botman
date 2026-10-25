@@ -98,7 +98,7 @@ class DeploymentService:
             if progress is not None:
                 maybe = progress(message)
                 if hasattr(maybe, "__await__"):
-                    await maybe  # type: ignore[misc]
+                    await maybe
 
         async with lock:
             config = self._config()

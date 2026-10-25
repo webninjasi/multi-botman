@@ -16,7 +16,7 @@ Use `cysystemd` 2.x, specifically `cysystemd.async_reader.AsyncJournalReader`.
 
 Implementation expectations:
 
-- open the system journal (`JournalOpenMode.SYSTEM`)
+- open the local machine's journal (`JournalOpenMode.LOCAL_ONLY`; real-host acceptance must confirm it sees the deployed runtime's container logs)
 - filter with `Rule("SYSLOG_IDENTIFIER", app_identifier)`
 - use `JournalEntry.cursor` and realtime timestamp metadata
 - use `seek_cursor()` for short restart resume

@@ -16,7 +16,7 @@ from botman_agent.journal import JournalRecord
 
 
 class Mode:
-    SYSTEM = object()
+    LOCAL_ONLY = object()
 
 
 class Rule:

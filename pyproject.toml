@@ -31,6 +31,7 @@ dev = [
   "pytest-asyncio>=0.24,<2",
   "mypy>=1.11,<2",
   "ruff>=0.8,<1",
+  "types-PyYAML>=6.0,<7",
 ]
 
 [tool.setuptools.packages.find]
@@ -52,6 +53,8 @@ select = ["E4", "E7", "E9", "F"]
 
 [tool.mypy]
 python_version = "3.11"
+# Central and agent run on Linux only (pwd/grp/os.fchmod).
+platform = "linux"
 files = ["src"]
 check_untyped_defs = true
 ignore_missing_imports = true

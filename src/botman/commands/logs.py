@@ -123,7 +123,7 @@ class HistoricalLogsCommandAdapter:
     @staticmethod
     def _discord_file(data: bytes, filename: str):
         try:
-            import discord  # type: ignore[import-not-found]
+            import discord
 
             return discord.File(io.BytesIO(data), filename=filename)
         except ImportError:  # tests can inspect a simple tuple without discord.py.
@@ -135,7 +135,7 @@ class HistoricalLogsCommandAdapter:
     @staticmethod
     async def _send(target: Any, content: str, **kwargs: Any) -> None:
         try:
-            import discord  # type: ignore[import-not-found]
+            import discord
 
             kwargs.setdefault("allowed_mentions", discord.AllowedMentions.none())
         except ImportError:

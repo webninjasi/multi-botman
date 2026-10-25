@@ -12,7 +12,7 @@ from pathlib import Path, PurePosixPath
 from typing import Literal, Protocol, runtime_checkable
 
 try:  # Kept optional at import time so config-only tools/tests remain usable.
-    import asyncssh  # type: ignore[import-not-found]
+    import asyncssh
 except ImportError:  # pragma: no cover - exercised only when dependency omitted.
     asyncssh = None  # type: ignore[assignment]
 
@@ -189,6 +189,7 @@ class LocalExecutor:
             proc.kill()
             await proc.wait()
             raise CommandTimeout(args, timeout if timeout is not None else 0.0) from exc
+        assert proc.returncode is not None  # communicate() waits for exit
         result = ExecResult(
             argv=args,
             returncode=proc.returncode,

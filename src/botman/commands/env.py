@@ -20,8 +20,8 @@ def register_env_commands(
     must exist inside that stack. They are not gated by `ADMIN_IDS`.
     """
 
-    import discord  # type: ignore[import-not-found]
-    from discord import app_commands  # type: ignore[import-not-found]
+    import discord
+    from discord import app_commands
 
     async def begin(interaction) -> None:
         if not interaction.response.is_done():

@@ -138,7 +138,7 @@ class LiveLogsCommandAdapter:
             raise RuntimeError("this channel does not support public threads")
         name = f"logs-{resolved.name}"[:100]
         try:
-            import discord  # type: ignore[import-not-found]
+            import discord
 
             thread = await create(name=name, type=discord.ChannelType.public_thread)
         except ImportError:
@@ -149,7 +149,7 @@ class LiveLogsCommandAdapter:
     async def _send(target: Any, content: str) -> None:
         kwargs: dict[str, Any] = {}
         try:
-            import discord  # type: ignore[import-not-found]
+            import discord
 
             kwargs["allowed_mentions"] = discord.AllowedMentions.none()
         except ImportError:

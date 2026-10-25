@@ -46,7 +46,7 @@ class UpdateCommandAdapter:
             timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
             name = f"deploy-{app_name}-{timestamp}"[:100]
             try:
-                import discord  # type: ignore[import-not-found]
+                import discord
 
                 thread = await create_thread(name=name, type=discord.ChannelType.public_thread)
             except ImportError:
@@ -121,7 +121,7 @@ class UpdateCommandAdapter:
     @staticmethod
     async def _send(target: Any, content: str, **kwargs: Any) -> None:
         try:
-            import discord  # type: ignore[import-not-found]
+            import discord
 
             kwargs.setdefault("allowed_mentions", discord.AllowedMentions.none())
         except ImportError:

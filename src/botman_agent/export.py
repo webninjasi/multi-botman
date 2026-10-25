@@ -78,7 +78,7 @@ class CysystemdHistoricalReader:
             mode, rule = self._api
             return mode, rule, self._reader_factory
         try:
-            from cysystemd.reader import (  # type: ignore[import-not-found]
+            from cysystemd.reader import (
                 JournalOpenMode,
                 JournalReader,
                 Rule,

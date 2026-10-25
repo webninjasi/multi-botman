@@ -219,6 +219,7 @@ def validate_compose_yaml(
                 f"service {app.service!r} logging.options.tag must be {app.log_identifier!r}"
             )
         build = service.get("build")
+        context: object
         if isinstance(build, str):
             context = build
         elif isinstance(build, dict):

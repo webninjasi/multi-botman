@@ -74,7 +74,7 @@ class LifecycleCommandAdapter:
     @staticmethod
     async def _send(ctx: Any, content: str, **kwargs: Any) -> None:
         try:
-            import discord  # type: ignore[import-not-found]
+            import discord
 
             kwargs.setdefault("allowed_mentions", discord.AllowedMentions.none())
         except ImportError:
