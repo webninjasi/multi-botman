@@ -1,4 +1,4 @@
-from botman_agent.formatting import render_entry
+from botman_agent.formatting import LiveBatch, render_entry
 
 
 def unwrap(content: str) -> str:
@@ -68,3 +68,22 @@ def test_deterministic_fuzz_preserves_non_huge_lines_and_budget():
         for part in parts:
             recovered.extend(unwrap(part.content).split("\n"))
         assert recovered == [sanitize_markdown(line) for line in raw_lines]
+
+
+def test_live_batch_packs_whole_entries_until_full():
+    batch = LiveBatch(limit=40)  # 28 payload chars after the wrapper
+    assert batch.add("one") == []
+    assert batch.add("two") == []
+    ready = batch.add("x" * 25)  # "one\ntwo\n" + 25 chars exceeds the budget
+    assert [unwrap(c) for c in ready] == ["one\ntwo"]
+    assert unwrap(batch.take()) == "x" * 25
+    assert batch.take() is None and batch.empty
+
+
+def test_live_batch_oversized_entry_flushes_pending_then_keeps_final_segment():
+    batch = LiveBatch(limit=40)
+    batch.add("first")
+    ready = batch.add("a" * 20 + "\n" + "b" * 20)
+    assert [unwrap(c) for c in ready] == ["first", "a" * 20]
+    assert batch.add("c") == []
+    assert unwrap(batch.take()) == "b" * 20 + "\nc"

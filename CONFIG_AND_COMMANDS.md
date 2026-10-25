@@ -12,6 +12,7 @@ settings:
   command_prefix: "!"
   journal_max_use: 1G
   live_resume_max_age_sec: 300
+  live_batch_max_delay_sec: 2
   release_keep_count: 3
   git_known_hosts: /etc/botman/git_known_hosts
   repo_cache_root: /var/lib/botman/repos

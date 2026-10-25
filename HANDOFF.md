@@ -108,6 +108,10 @@ The stack-authorized `/env` module no longer uses postponed annotations for nest
 
 `setup.sh --mode target` is now runtime-aware. It checks an existing `docker compose` / `podman compose` first instead of blindly installing Podman. Docker targets add `botmgr` to the Docker socket's owning group and skip all Podman linger/user-socket setup. Podman remains rootless. Use `--runtime docker|podman` when both are installed. A target registered through Discord must use the matching `compose_argv` (`docker compose` or `podman compose`).
 
+### 2026-10-26 live-log batching
+
+The live agent now batches consecutive journal entries into one Discord message. A batch is sent when the next entry wouldn't fit under `discord_message_limit`, or after `live_batch_max_delay_sec` (default 2s, `0` = per entry), whichever comes first. A cursor is checkpointed only after the batch containing that entry's final segment is acknowledged. See `LOGGING.md` "Implemented batching". Central writes the new `batch_max_delay_sec` agent setting, and the agent config uses `extra="forbid"`, so update the central and the agents together.
+
 ### 2026-09-30 Docker target bootstrap follow-up
 
 An existing Docker installation no longer fails auto-detection merely because `docker compose` is missing. `setup.sh` selects Docker, attempts a Compose v2 package (`docker-compose-plugin` or `docker-compose-v2`), and only then verifies `docker compose`. The target `botmgr` account is created before runtime/plugin setup so partial setup failures are recoverable by simply rerunning the script.

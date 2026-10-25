@@ -149,6 +149,14 @@ For each journal entry:
    - the final outbound message for the entry carries the entry's safe checkpoint cursor.
 5. Continue with later journal entries only after this entry's sequence has been sent in order.
 
+### Implemented batching (`LiveBatch` + `_deliver_batched`)
+
+- Consecutive entries are packed into one pending Discord message (newline-joined inside a single code fence).
+- The pending message is sent when the next entry would push it past `discord_message_limit`, or when `batch_max_delay_sec` (central `settings.live_batch_max_delay_sec`, default `2`) has passed since its first entry, whichever comes first. `0` sends per entry.
+- The final segment of an oversized entry starts the next pending batch.
+- Memory stays bounded to one pending message plus at most one entry read ahead.
+- The checkpoint saved after a send is the newest entry whose final segment that send contained. Entries still in an unsent batch are re-delivered after a crash, never skipped.
+
 A huge line marker should be unambiguous, e.g.:
 
 ```text

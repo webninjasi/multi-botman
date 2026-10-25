@@ -43,6 +43,7 @@ def render_server_agent_config(config: BotmanConfig, server_name: str) -> bytes:
         settings=AgentSettings(
             state_dir=Path("/var/lib/botman-log-agent/state"),
             resume_max_age_sec=config.settings.live_resume_max_age_sec,
+            batch_max_delay_sec=config.settings.live_batch_max_delay_sec,
         ),
         apps=apps,
     )

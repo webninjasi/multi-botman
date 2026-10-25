@@ -21,6 +21,8 @@ class AgentSettings(_StrictModel):
     state_dir: Path = Path("/var/lib/botman-log-agent/state")
     resume_max_age_sec: int = Field(default=300, ge=1, le=86_400)
     discord_message_limit: int = Field(default=2000, ge=256, le=2000)
+    # Max seconds a partially filled live-log message waits for more entries; 0 sends per entry.
+    batch_max_delay_sec: float = Field(default=2.0, ge=0.0, le=60.0)
     request_timeout_sec: float = Field(default=30.0, ge=1.0, le=120.0)
     retry_initial_sec: float = Field(default=1.0, ge=0.05, le=60.0)
     retry_max_sec: float = Field(default=30.0, ge=0.1, le=300.0)

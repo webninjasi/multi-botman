@@ -1,4 +1,4 @@
-"""Live app task and supervisor: journal -> formatter -> Discord -> checkpoint."""
+"""Live app task and supervisor: journal -> batch -> Discord -> checkpoint."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from collections.abc import Callable
 
 from .config import AgentApp, AgentSettings
 from .discord_sink import DiscordWebhookSink, FatalDiscordDestinationError
-from .formatting import gap_marker, render_entry
-from .journal import CysystemdJournalStream
+from .formatting import LiveBatch, gap_marker
+from .journal import CysystemdJournalStream, JournalRecord
 from .state import AppState, CorruptStateError, StateStore, choose_start
 
 LOG = logging.getLogger(__name__)
@@ -79,24 +79,100 @@ async def run_live_app(
             except FatalDiscordDestinationError as exc:
                 raise AppSuspendedError(str(exc)) from exc
 
-        async for record in stream.records():
-            segments = render_entry(record.message, limit=settings.discord_message_limit)
-            try:
-                for segment in segments:
-                    await sink.send(segment.content)
-            except FatalDiscordDestinationError as exc:
-                raise AppSuspendedError(str(exc)) from exc
-            # Commit only after *every* segment for this journal entry succeeds.
-            state_store.save(
-                app_name,
-                AppState(
-                    subscription_id=app.subscription_id,
-                    cursor=record.cursor,
-                    last_realtime_usec=record.realtime_usec,
-                ),
-            )
+        await _deliver_batched(
+            app_name,
+            app.subscription_id,
+            stream,
+            settings,
+            state_store=state_store,
+            sink=sink,
+        )
     finally:
         await stream.close()
+
+
+async def _deliver_batched(
+    app_name: str,
+    subscription_id: str,
+    stream: CysystemdJournalStream,
+    settings: AgentSettings,
+    *,
+    state_store: StateStore,
+    sink: DiscordWebhookSink,
+) -> None:
+    """Batch entries into Discord messages, flushing when full or after a max delay.
+
+    Memory stays bounded: at most one pending message of text plus one journal
+    entry read ahead. The checkpoint is saved only after the message holding an
+    entry's final segment is acknowledged, so a crash re-delivers (never skips)
+    the unsent batch.
+    """
+    loop = asyncio.get_running_loop()
+    batch = LiveBatch(limit=settings.discord_message_limit)
+    max_delay = settings.batch_max_delay_sec
+    # Checkpoint for the newest entry whose final segment sits in the pending batch.
+    pending_state: AppState | None = None
+    deadline: float | None = None
+
+    async def send(content: str) -> None:
+        try:
+            await sink.send(content)
+        except FatalDiscordDestinationError as exc:
+            raise AppSuspendedError(str(exc)) from exc
+
+    def commit() -> None:
+        nonlocal pending_state
+        if pending_state is not None:
+            state_store.save(app_name, pending_state)
+            pending_state = None
+
+    async def flush() -> None:
+        nonlocal deadline
+        content = batch.take()
+        if content is not None:
+            await send(content)
+        commit()
+        deadline = None
+
+    records = stream.records().__aiter__()
+    next_record: asyncio.Future[JournalRecord] | None = None
+    try:
+        while True:
+            if next_record is None:
+                next_record = asyncio.ensure_future(anext(records))
+            timeout = None if deadline is None else max(0.0, deadline - loop.time())
+            done, _ = await asyncio.wait({next_record}, timeout=timeout)
+            if not done:
+                await flush()
+                continue
+            task, next_record = next_record, None
+            try:
+                record = task.result()
+            except StopAsyncIteration:
+                break
+            ready = batch.add(record.message)
+            for content in ready:
+                await send(content)
+            if ready:
+                # The previously pending batch was among the acknowledged messages.
+                commit()
+            pending_state = AppState(
+                subscription_id=subscription_id,
+                cursor=record.cursor,
+                last_realtime_usec=record.realtime_usec,
+            )
+            if max_delay <= 0:
+                await flush()
+            elif deadline is None:
+                deadline = loop.time() + max_delay
+        await flush()
+    finally:
+        if next_record is not None and not next_record.done():
+            next_record.cancel()
+            try:
+                await next_record
+            except (asyncio.CancelledError, StopAsyncIteration, Exception):
+                pass
 
 
 async def supervise_live_app(

@@ -66,6 +66,7 @@ class SettingsConfig(StrictModel):
     command_prefix: str = "!"
     journal_max_use: str = "1G"
     live_resume_max_age_sec: int = Field(default=300, ge=1, le=86_400)
+    live_batch_max_delay_sec: float = Field(default=2.0, ge=0.0, le=60.0)
     release_keep_count: int = Field(default=3, ge=1, le=20)
     git_known_hosts: Path = Path("/etc/botman/git_known_hosts")
     repo_cache_root: Path = Path("/var/lib/botman/repos")
