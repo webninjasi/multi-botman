@@ -77,7 +77,7 @@ sudo /opt/botman/scripts/update.sh
 
 The updater refuses tracked local changes, fast-forwards Git only, reinstalls installed central/agent components, refreshes the shipped unit files, reloads systemd, and restarts configured services.
 
-Read [`VPS_AND_DISCORD_SETUP.md`](VPS_AND_DISCORD_SETUP.md) for first-time trust/onboarding, manual alternatives, Discord commands, and migration details. It distinguishes:
+Read [`docs/VPS_AND_DISCORD_SETUP.md`](docs/VPS_AND_DISCORD_SETUP.md) for first-time trust/onboarding, manual alternatives, Discord commands, and migration details. It distinguishes:
 
 - central VPS setup
 - remote target VPS setup
@@ -119,13 +119,15 @@ botman-target-preflight --help
 
 ## Documentation read order
 
-1. `HANDOFF.md` — current implementation state and next work.
-2. `VPS_AND_DISCORD_SETUP.md` — operator bootstrap/onboarding runbook.
-3. `DECISIONS.md` — settled product/architecture decisions.
-4. `ARCHITECTURE.md` — system and data flows.
-5. `IMPLEMENTATION_PLAN.md` — phased implementation sequence.
-6. `CONFIG_AND_COMMANDS.md` — config model and command UX.
-7. `SECURITY.md` — trust boundaries and security requirements.
-8. `TEST_PLAN.md` — acceptance and integration requirements.
-9. `LOGGING.md` / `DEPLOYMENT.md` — detailed subsystems.
-10. `ROADMAP.md`, `REFERENCES.md`, `HISTORY.md`.
+All docs live under [`docs/`](docs/). Start with [`docs/HANDOFF.md`](docs/HANDOFF.md), which links to the rest:
+
+1. [`docs/HANDOFF.md`](docs/HANDOFF.md) — current implementation state, next work, and doc map.
+2. [`docs/VPS_AND_DISCORD_SETUP.md`](docs/VPS_AND_DISCORD_SETUP.md) — operator bootstrap/onboarding runbook.
+3. [`docs/DECISIONS.md`](docs/DECISIONS.md) — settled product/architecture decisions.
+4. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — system and data flows.
+5. [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) — phased implementation sequence.
+6. [`docs/CONFIG_AND_COMMANDS.md`](docs/CONFIG_AND_COMMANDS.md) — config model and command UX.
+7. [`docs/SECURITY.md`](docs/SECURITY.md) — trust boundaries and security requirements.
+8. [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) — acceptance and integration requirements.
+9. [`docs/LOGGING.md`](docs/LOGGING.md) / [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — detailed subsystems.
+10. [`docs/ROADMAP.md`](docs/ROADMAP.md), [`docs/REFERENCES.md`](docs/REFERENCES.md), [`docs/history/`](docs/history/) (dated per-feature change notes).

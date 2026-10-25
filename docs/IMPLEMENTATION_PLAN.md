@@ -309,7 +309,7 @@ Important workflow tests:
 - real Docker host test
 - real Podman host test
 - failure drills from `TEST_PLAN.md`
-- update README/HANDOFF/HISTORY with actual implementation status
+- update README/HANDOFF and add `history/` notes with actual implementation status
 
 ## Definition of v1 complete
 

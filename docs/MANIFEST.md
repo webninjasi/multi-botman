@@ -55,20 +55,22 @@ Current fresh result: **176 passed**.
 
 ## Operator/design documentation
 
-- `VPS_AND_DISCORD_SETUP.md`
 - `README.md`
-- `HANDOFF.md`
-- `DECISIONS.md`
-- `ARCHITECTURE.md`
-- `IMPLEMENTATION_PLAN.md`
-- `LOGGING.md`
-- `DEPLOYMENT.md`
-- `CONFIG_AND_COMMANDS.md`
-- `SECURITY.md`
-- `TEST_PLAN.md`
-- `ROADMAP.md`
-- `REFERENCES.md`
-- `HISTORY.md`
+- `AGENTS.md` — agent entry point; points to `docs/HANDOFF.md`
+- `docs/HANDOFF.md`
+- `docs/VPS_AND_DISCORD_SETUP.md`
+- `docs/DECISIONS.md`
+- `docs/ARCHITECTURE.md`
+- `docs/IMPLEMENTATION_PLAN.md`
+- `docs/LOGGING.md`
+- `docs/DEPLOYMENT.md`
+- `docs/CONFIG_AND_COMMANDS.md`
+- `docs/SECURITY.md`
+- `docs/TEST_PLAN.md`
+- `docs/ROADMAP.md`
+- `docs/REFERENCES.md`
+- `docs/MANIFEST.md`
+- `docs/history/` — dated per-feature change notes (`YYYY-MM-DD-HHMM-<topic>.md`)
 
 ## Archived reference
 
