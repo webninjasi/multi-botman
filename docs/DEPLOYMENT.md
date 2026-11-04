@@ -141,7 +141,7 @@ When a new app is added after the Compose file, validate that app's service agai
 
 ## Deployment output
 
-`/update` and `!update` create a thread under the stack command channel.
+`/update` and `!update` reply in the stack command channel and start the deployment thread from that reply. The reply is edited with the final status. If the reply cannot be threaded, the bot falls back to a standalone channel thread.
 
 Post concise line-oriented progress there:
 

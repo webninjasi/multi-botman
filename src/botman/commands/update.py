@@ -35,16 +35,29 @@ class UpdateCommandAdapter:
             await defer()
 
         thread = None
+        starter = None
 
         async def ensure_thread():
-            nonlocal thread
+            # The thread hangs off the command's own reply, which also answers
+            # the deferred interaction. Created lazily so rejected requests
+            # (wrong channel/unknown app) get a plain reply and no thread.
+            nonlocal thread, starter
             if thread is not None:
                 return thread
+            timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+            name = f"deploy-{app_name}-{timestamp}"[:100]
+            if starter is None:
+                starter = await self._send(ctx, f"Deploying `{app_name}`; progress follows in the thread.")
+            create_from_message = getattr(starter, "create_thread", None)
+            if callable(create_from_message):
+                try:
+                    thread = await create_from_message(name=name)
+                    return thread
+                except Exception:
+                    pass
             create_thread = getattr(channel, "create_thread", None)
             if not callable(create_thread):
                 raise RuntimeError("this channel does not support deployment threads")
-            timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-            name = f"deploy-{app_name}-{timestamp}"[:100]
             try:
                 import discord
 
@@ -52,6 +65,14 @@ class UpdateCommandAdapter:
             except ImportError:
                 thread = await create_thread(name=name)
             return thread
+
+        async def failure_target():
+            if thread is not None:
+                return thread
+            try:
+                return await ensure_thread()
+            except Exception:
+                return ctx
 
         async def progress(message: str) -> None:
             target = await ensure_thread()
@@ -70,27 +91,26 @@ class UpdateCommandAdapter:
             await self._send(ctx, f"Unknown app: `{app_name}`")
             return
         except (DeploymentError, GitError) as exc:
-            target = thread or await ensure_thread()
+            target = await failure_target()
             transcript = (
                 exc.transcript.render()
                 if isinstance(exc, DeploymentError)
                 else (f"Git failure: {exc}\n").encode()
             )
-            await self._send_with_transcript(
-                target,
-                f"Deployment failed for `{app_name}`: {exc}",
-                app_name,
-                transcript,
-            )
+            message = f"Deployment failed for `{app_name}`: {exc}"
+            await self._send_with_transcript(target, message, app_name, transcript)
+            await self._edit(starter, message)
             return
         except Exception as exc:
             # Keep unexpected failures visible in the deployment thread without
             # dumping a traceback or credentials into a public channel.
-            target = thread or await ensure_thread()
-            await self._send(target, f"Deployment failed for `{app_name}`: {type(exc).__name__}: {exc}")
+            target = await failure_target()
+            message = f"Deployment failed for `{app_name}`: {type(exc).__name__}: {exc}"
+            await self._send(target, message)
+            await self._edit(starter, message)
             return
 
-        target = thread or await ensure_thread()
+        target = await failure_target()
         summary = (
             f"`{app_name}` already runs `{result.sha}`; no deployment was needed."
             if result.status == "noop"
@@ -102,6 +122,7 @@ class UpdateCommandAdapter:
             app_name,
             result.transcript,
         )
+        await self._edit(starter, summary)
 
     async def _send_with_transcript(
         self,
@@ -119,14 +140,25 @@ class UpdateCommandAdapter:
         await self._send(target, content, **kwargs)
 
     @staticmethod
-    async def _send(target: Any, content: str, **kwargs: Any) -> None:
+    async def _send(target: Any, content: str, **kwargs: Any) -> Any:
         try:
             import discord
 
             kwargs.setdefault("allowed_mentions", discord.AllowedMentions.none())
         except ImportError:
             pass
-        await target.send(content, **kwargs)
+        return await target.send(content, **kwargs)
+
+    @staticmethod
+    async def _edit(message: Any, content: str) -> None:
+        """Best-effort: mirror the final status on the thread's starter reply."""
+        edit = getattr(message, "edit", None)
+        if not callable(edit):
+            return
+        try:
+            await edit(content=content[:2000])
+        except Exception:
+            pass
 
 
 def register_update_command(bot: Any, adapter: UpdateCommandAdapter) -> None:

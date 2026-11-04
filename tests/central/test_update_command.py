@@ -26,17 +26,39 @@ class FakeChannel:
         return thread
 
 
+class FakeMessage:
+    def __init__(self, content, *, threadable=True) -> None:
+        self.content = content
+        self.threads = []
+        self.threadable = threadable
+
+    async def create_thread(self, **kwargs):
+        if not self.threadable:
+            raise RuntimeError("cannot thread this message")
+        thread = FakeThread()
+        self.threads.append((kwargs, thread))
+        return thread
+
+    async def edit(self, *, content):
+        self.content = content
+
+
 class FakeContext:
-    def __init__(self, channel_id=111) -> None:
+    def __init__(self, channel_id=111, *, threadable=True) -> None:
         self.channel = FakeChannel(channel_id)
         self.sent = []
+        self.messages = []
         self.deferred = 0
+        self.threadable = threadable
 
     async def defer(self):
         self.deferred += 1
 
     async def send(self, content, **kwargs):
         self.sent.append((content, kwargs))
+        message = FakeMessage(content, threadable=self.threadable)
+        self.messages.append(message)
+        return message
 
 
 class FakeDeploymentService:
@@ -69,7 +91,7 @@ class FakeBot:
 
 
 @pytest.mark.asyncio
-async def test_update_creates_thread_only_after_service_authorizes_and_streams_progress() -> None:
+async def test_update_replies_and_threads_progress_off_that_reply() -> None:
     service = FakeDeploymentService()
     adapter = UpdateCommandAdapter(service)
     ctx = FakeContext(111)
@@ -77,10 +99,26 @@ async def test_update_creates_thread_only_after_service_authorizes_and_streams_p
     await adapter.invoke(ctx, "app-a")
 
     assert service.calls == [("app-a", 111)]
-    assert ctx.sent == []
+    # One reply answers the deferred interaction; the thread hangs off it.
+    assert len(ctx.sent) == 1
+    starter = ctx.messages[0]
+    assert ctx.channel.threads == []
+    assert len(starter.threads) == 1
+    _, thread = starter.threads[0]
+    assert thread.sent[0][0] == "fetching app"
+    assert "Deployment complete" in thread.sent[-1][0]
+    assert "Deployment complete" in starter.content
+
+
+@pytest.mark.asyncio
+async def test_update_falls_back_to_channel_thread_when_reply_cannot_thread() -> None:
+    ctx = FakeContext(111, threadable=False)
+
+    await UpdateCommandAdapter(FakeDeploymentService()).invoke(ctx, "app-a")
+
+    assert len(ctx.sent) == 1
     assert len(ctx.channel.threads) == 1
     _, thread = ctx.channel.threads[0]
-    assert thread.sent[0][0] == "fetching app"
     assert "Deployment complete" in thread.sent[-1][0]
 
 
@@ -101,9 +139,10 @@ async def test_update_failure_attaches_to_existing_progress_thread() -> None:
     service = FakeDeploymentService(fail=True)
     ctx = FakeContext()
     await UpdateCommandAdapter(service).invoke(ctx, "app-a")
-    assert len(ctx.channel.threads) == 1
-    _, thread = ctx.channel.threads[0]
+    assert len(ctx.sent) == 1
+    _, thread = ctx.messages[0].threads[0]
     assert "Deployment failed" in thread.sent[-1][0]
+    assert "Deployment failed" in ctx.messages[0].content
 
 
 def test_update_registers_as_hybrid_command() -> None:

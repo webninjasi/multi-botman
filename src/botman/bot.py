@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .commands.admin import register_admin_commands
 from .commands.env import register_env_commands
+from .commands.errors import on_app_command_error, on_command_error
 from .commands.lifecycle import LifecycleCommandAdapter, register_lifecycle_commands
 from .commands.live_logs import LiveLogsCommandAdapter, register_live_logs_commands
 from .commands.logs import HistoricalLogsCommandAdapter, register_logs_commands
@@ -41,6 +42,10 @@ def create_bot(config_path: str | Path):
         intents=intents,
         help_command=None,
     )
+    # Reply to anything the adapters did not handle so deferred slash
+    # interactions never end in "The application did not respond".
+    bot.add_listener(on_command_error, "on_command_error")
+    bot.tree.error(on_app_command_error)
     shared_locks = StackLockRegistry()
     agent_locks = ServerAgentLockRegistry()
 

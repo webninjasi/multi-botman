@@ -62,6 +62,7 @@ Read [`DECISIONS.md`](DECISIONS.md) for full detail. Key constraints:
 - Cursor advances only after all Discord segments representing the journal entry are acknowledged.
 - New/long-gap live sessions tail instead of flooding missed history; historical `/logs download` is the recovery path.
 - Env/config changes do not implicitly restart/deploy apps (`/apply APP` applies them explicitly); runtime-affecting stack/env/Git mutations serialize with stack operations, and queued lifecycle/deploy/Compose work reloads config after obtaining the lock.
+- Every slash/hybrid invocation must get a reply; `commands/errors.py` covers unhandled exceptions with a generic message (exception type only, never its text).
 - Admin/secret workflows are slash-only and ephemeral; lifecycle/update/log UX remains hybrid where useful.
 
 ## Production layout
