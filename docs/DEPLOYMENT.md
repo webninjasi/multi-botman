@@ -135,7 +135,7 @@ Upload flow:
 5. validate managed app journald logging convention (`driver: journald`, expected tag)
 6. validate managed app build context follows the standard release layout where the service is Git-deployed
 7. run runtime `compose config` against the target after upload where feasible
-8. never auto-rebuild/restart apps merely because Compose config changed
+8. never auto-rebuild/restart apps merely because Compose config changed; the operator runs `/apply APP` explicitly
 
 When a new app is added after the Compose file, validate that app's service against the existing Compose file.
 
@@ -161,7 +161,7 @@ Do not route Compose build/up output through the journald live-log daemon. Runti
 
 ## Lifecycle command output
 
-- `/start`, `/stop`, `/restart`, `/status`: output goes directly to the stack command channel, not a deployment thread.
+- `/start`, `/stop`, `/restart`, `/status`, `/apply`: output goes directly to the stack command channel, not a deployment thread.
 - Capture stdout/stderr and use the shared Discord text formatter for concise output.
 - If unexpectedly long, attach the full command transcript rather than silently throwing it away.
 

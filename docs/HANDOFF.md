@@ -61,7 +61,7 @@ Read [`DECISIONS.md`](DECISIONS.md) for full detail. Key constraints:
 - Live logging has no unbounded producer queue; delivery backpressure stops that app from reading ahead.
 - Cursor advances only after all Discord segments representing the journal entry are acknowledged.
 - New/long-gap live sessions tail instead of flooding missed history; historical `/logs download` is the recovery path.
-- Env/config changes do not implicitly restart/deploy apps; runtime-affecting stack/env/Git mutations serialize with stack operations, and queued lifecycle/deploy/Compose work reloads config after obtaining the lock.
+- Env/config changes do not implicitly restart/deploy apps (`/apply APP` applies them explicitly); runtime-affecting stack/env/Git mutations serialize with stack operations, and queued lifecycle/deploy/Compose work reloads config after obtaining the lock.
 - Admin/secret workflows are slash-only and ephemeral; lifecycle/update/log UX remains hybrid where useful.
 
 ## Production layout
@@ -76,6 +76,7 @@ Hybrid slash/prefix:
 - `/stop APP` / `!stop APP`
 - `/restart APP` / `!restart APP`
 - `/status APP` / `!status APP`
+- `/apply APP` / `!apply APP` (service-scoped `up -d`; applies env/Compose edits)
 - `/update APP` / `!update APP`
 - `/livelogs start|stop APP` / prefix equivalents
 - `/logs tail APP [lines]` / prefix equivalent

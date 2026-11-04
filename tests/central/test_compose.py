@@ -85,6 +85,7 @@ async def test_compose_argv_is_stack_scoped_and_service_scoped() -> None:
     await manager.status(app_a)
     await manager.build(app_a)
     await manager.up(app_a)
+    await manager.apply(app_a)
 
     base = (
         "docker",
@@ -100,6 +101,7 @@ async def test_compose_argv_is_stack_scoped_and_service_scoped() -> None:
         (*base, "restart", "svc-a"),
         (*base, "ps", "svc-a"),
         (*base, "build", "svc-a"),
+        (*base, "up", "-d", "--no-deps", "svc-a"),
         (*base, "up", "-d", "--no-deps", "svc-a"),
     ]
 
@@ -224,3 +226,18 @@ async def test_store_backed_lifecycle_reloads_config_after_waiting_for_stack_loc
     await task
 
     assert executor.calls[-1][-2:] == ("restart", "svc-new")
+
+
+@pytest.mark.asyncio
+async def test_store_backed_apply_runs_service_scoped_up(tmp_path) -> None:
+    from botman.config import ConfigStore
+
+    store = ConfigStore(tmp_path / "config.yaml")
+    await store.save(config_two_apps())
+    executor = RecordingExecutor()
+    service = LifecycleService(store)
+    service.compose.executor_factory = lambda _: executor
+
+    await service.execute("apply", app_name="app-a", channel_id=111)
+
+    assert executor.calls[-1][-4:] == ("up", "-d", "--no-deps", "svc-a")

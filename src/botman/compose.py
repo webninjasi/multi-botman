@@ -15,7 +15,7 @@ from .models import BotmanConfig, LocalServerConfig, SSHServerConfig
 from .routing import ResolvedApp, authorize_app_channel
 
 MAX_COMPOSE_BYTES = 512 * 1024
-LifecycleOperation = Literal["start", "stop", "restart", "status"]
+LifecycleOperation = Literal["start", "stop", "restart", "status", "apply"]
 
 
 class ComposeValidationError(ValueError):
@@ -105,6 +105,9 @@ class ComposeManager:
             "stop": (("stop", resolved.app.service), 60),
             "restart": (("restart", resolved.app.service), 120),
             "status": (("ps", resolved.app.service), 30),
+            # `up` recreates the container only when its Compose/env config
+            # changed, so this applies edits that `restart` would not pick up.
+            "apply": (("up", "-d", "--no-deps", resolved.app.service), 180),
         }
         tail, timeout = tails[operation]
         return await self._run_unlocked(resolved, tail, timeout=timeout)
@@ -130,6 +133,9 @@ class ComposeManager:
         return await self._run_locked(
             resolved, ("up", "-d", "--no-deps", resolved.app.service), timeout=180
         )
+
+    async def apply(self, resolved: ResolvedApp) -> ExecResult:
+        return await self.up(resolved)
 
 
 class LifecycleService:

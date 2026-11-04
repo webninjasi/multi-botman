@@ -83,13 +83,14 @@ class LifecycleCommandAdapter:
 
 
 def register_lifecycle_commands(bot: Any, adapter: LifecycleCommandAdapter) -> None:
-    """Register /start, /stop, /restart, /status and their prefix equivalents."""
+    """Register /start, /stop, /restart, /status, /apply and their prefix equivalents."""
 
     descriptions = {
         "start": "Start one managed app service.",
         "stop": "Stop one managed app service.",
         "restart": "Restart one managed app service.",
         "status": "Show Compose status for one managed app service.",
+        "apply": "Recreate one app service if its Compose or env config changed.",
     }
 
     def callback_for(operation: LifecycleOperation):
@@ -100,7 +101,7 @@ def register_lifecycle_commands(bot: Any, adapter: LifecycleCommandAdapter) -> N
         callback.__doc__ = descriptions[operation]
         return callback
 
-    for operation in ("start", "stop", "restart", "status"):
+    for operation in ("start", "stop", "restart", "status", "apply"):
         bot.hybrid_command(name=operation, description=descriptions[operation])(
             callback_for(operation)
         )

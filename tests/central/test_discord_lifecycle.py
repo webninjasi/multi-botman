@@ -81,7 +81,7 @@ async def test_registered_hybrid_callbacks_share_adapter_boundary() -> None:
     bot = FakeBot()
     register_lifecycle_commands(bot, adapter)
 
-    assert set(bot.commands) == {"start", "stop", "restart", "status"}
+    assert set(bot.commands) == {"start", "stop", "restart", "status", "apply"}
     for operation, (callback, description) in bot.commands.items():
         ctx = FakeContext(321)
         await callback(ctx, "app-a")

@@ -13,7 +13,7 @@ Implemented and covered by the current automated suite:
 - argv-safe local and strictly host-verified SSH/SFTP execution
 - stack-scoped Compose identity, per-stack locks, service-only lifecycle operations
 - runtime-affecting config/Git/env mutations share the same stack operation lock
-- hybrid Discord `/start|stop|restart|status` + prefix equivalents
+- hybrid Discord `/start|stop|restart|status|apply` + prefix equivalents
 - slash-only admin onboarding for servers, stacks, apps, Compose, Git keys, and agent sync/status; slash-only ephemeral `/env` uses the same stack-channel authorization as `/update`
 - runtime `compose config` validation before atomic Compose activation
 - central Git-over-SSH cache with strict host verification and stack-namespaced per-app deploy keys

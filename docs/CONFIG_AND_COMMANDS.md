@@ -128,9 +128,14 @@ Proposed behavior:
 /status APP
 !status APP
 
+/apply APP
+!apply APP
+
 /update APP
 !update APP
 ```
+
+`/apply` runs `compose up -d --no-deps <service>` against the active release. Compose recreates the container only if its Compose or env config changed, so `/apply` is how env/Compose edits take effect without a new commit. `/restart` keeps the existing container and does not pick up those edits; `/update` is a no-op when the target already runs the fetched commit.
 
 ### Logs group
 
@@ -250,7 +255,7 @@ Rules:
 - upload size sanity limit
 - env changes never auto-restart/deploy
 - env upload/set/unset serialize against lifecycle/deployment work for that stack; set/unset hold the lock across read-modify-write
-- user explicitly runs `/restart` or `/update` when ready
+- user explicitly runs `/apply` (or `/update` for new code) when ready; `/restart` does not reload env
 
 ## Config/Compose changes
 

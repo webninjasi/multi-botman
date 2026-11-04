@@ -70,7 +70,7 @@ def register_env_commands(
                 app, interaction.channel_id, await file.read()
             )
             await interaction.followup.send(
-                f"Environment for `{app}` written to `{path}`. No restart/deploy was performed.",
+                f"Environment for `{app}` written to `{path}`. Run `/apply {app}` to recreate the container with it.",
                 ephemeral=True,
             )
         except Exception as exc:
@@ -89,7 +89,7 @@ def register_env_commands(
                 raise ValueError("env commands must be run in a configured stack channel")
             await EnvService(store, locks=locks).set(app, interaction.channel_id, key, value)
             await interaction.followup.send(
-                f"`{key}` updated for `{app}`. No restart/deploy was performed.",
+                f"`{key}` updated for `{app}`. Run `/apply {app}` to recreate the container with it.",
                 ephemeral=True,
             )
         except Exception as exc:
@@ -103,7 +103,7 @@ def register_env_commands(
                 raise ValueError("env commands must be run in a configured stack channel")
             await EnvService(store, locks=locks).unset(app, interaction.channel_id, key)
             await interaction.followup.send(
-                f"`{key}` removed from `{app}`. No restart/deploy was performed.",
+                f"`{key}` removed from `{app}`. Run `/apply {app}` to recreate the container with it.",
                 ephemeral=True,
             )
         except Exception as exc:
