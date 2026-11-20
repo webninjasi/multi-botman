@@ -266,6 +266,8 @@ Slash-only and ephemeral, but **not** `ADMIN_IDS`-gated. Authorization matches `
 
 No modal raw editor.
 
+`/env show APP` and `/config compose show` always attach the file. When the content fits in one Discord message (2000 characters) and has no ```` ``` ````, the reply also shows it inline in a code block.
+
 Rules:
 
 - distinguish “file missing” from SSH/SFTP/read failure

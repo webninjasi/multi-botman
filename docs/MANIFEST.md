@@ -20,6 +20,7 @@ Updated 2026-09-30 for the fresh Botman implementation.
 - `src/botman/bot.py` — discord.py entrypoint/runtime wiring
 - `src/botman/commands/lifecycle.py`
 - `src/botman/commands/update.py`
+- `src/botman/commands/replies.py` — shared file reply: inline code block when it fits, file always attached
 - `src/botman/commands/errors.py` — last-resort reply for unhandled hybrid/slash command errors (type name only)
 - `src/botman/commands/live_logs.py`
 - `src/botman/commands/logs.py`

@@ -1,10 +1,9 @@
 """Slash-only, ephemeral environment management for stack-authorized deployers."""
 
-import io
-
 from ..compose import StackLockRegistry
 from ..config import ConfigStore
 from ..env import ENV_UPLOAD_MAX_BYTES, EnvMissingError, EnvService
+from .replies import send_file_preview
 
 
 def register_env_commands(
@@ -39,13 +38,12 @@ def register_env_commands(
             if interaction.channel_id is None:
                 raise ValueError("env commands must be run in a configured stack channel")
             env_file = await EnvService(store, locks=locks).show(app, interaction.channel_id)
-            attachment = discord.File(
-                io.BytesIO(env_file.content.encode()), filename=f"{app}.env"
-            )
-            await interaction.followup.send(
-                f"Environment file for `{app}` (`{env_file.path}`).",
-                file=attachment,
-                ephemeral=True,
+            await send_file_preview(
+                interaction,
+                header=f"Environment file for `{app}` (`{env_file.path}`).",
+                content=env_file.content,
+                filename=f"{app}.env",
+                language="ini",
             )
         except EnvMissingError as exc:
             await interaction.followup.send(str(exc), ephemeral=True)

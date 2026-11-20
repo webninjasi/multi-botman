@@ -1,6 +1,5 @@
 """Slash-only, ephemeral administrator commands for onboarding/configuration."""
 
-import io
 from typing import Literal
 
 from ..admin import parse_admin_ids
@@ -14,6 +13,7 @@ from ..compose import (
 from ..config import ConfigStore
 from ..git import GitAdminService
 from ..live_logs import ServerAgentLockRegistry
+from .replies import send_file_preview
 
 
 def register_admin_commands(
@@ -295,17 +295,13 @@ def register_admin_commands(
             config = store.load()
             stack, _ = config.stack_for_channel(interaction.channel_id)
             content = await ComposeAdminService(store, locks=locks).show(stack)
-            if len(content) <= 1600 and "```" not in content:
-                await interaction.followup.send(
-                    f"```yaml\n{content}\n```", ephemeral=True
-                )
-            else:
-                attachment = discord.File(
-                    io.BytesIO(content.encode()), filename=f"{stack}-compose.yml"
-                )
-                await interaction.followup.send(
-                    f"Compose configuration for `{stack}`.", file=attachment, ephemeral=True
-                )
+            await send_file_preview(
+                interaction,
+                header=f"Compose configuration for `{stack}`.",
+                content=content,
+                filename=f"{stack}-compose.yml",
+                language="yaml",
+            )
         except Exception as exc:
             await fail(interaction, exc)
 
