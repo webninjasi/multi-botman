@@ -15,7 +15,7 @@ from ..git import GitAdminService
 from ..app_removal import AppRemovalService
 from ..live_logs import ServerAgentLockRegistry
 from .app_remove import send_removal_preview
-from .compose_apply import apply_now_view, send_apply_preview
+from .compose_apply import apply_now_view, send_apply_preview, send_prune_preview
 from .replies import send_file_preview
 
 
@@ -350,6 +350,27 @@ def register_admin_commands(
                 content=content,
                 filename=f"{stack}-compose.yml",
                 language="yaml",
+            )
+        except Exception as exc:
+            await fail(interaction, exc)
+
+    @compose_group.command(
+        name="prune", description="Preview, then remove volumes/networks the Compose file dropped."
+    )
+    async def compose_prune(interaction: discord.Interaction, volumes: bool = False):
+        if not await begin(interaction):
+            return
+        try:
+            if interaction.channel_id is None:
+                raise ValueError("Compose prune must be run in a configured stack channel")
+            config = store.load()
+            stack, _ = config.stack_for_channel(interaction.channel_id)
+            await send_prune_preview(
+                interaction,
+                ComposeAdminService(store, locks=locks),
+                stack,
+                include_volumes=volumes,
+                authorize=authorize,
             )
         except Exception as exc:
             await fail(interaction, exc)

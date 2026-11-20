@@ -436,3 +436,130 @@ def test_apply_plan_rendering_splits_changed_and_unchanged() -> None:
 
     assert "Create or recreate (new or changed config): `svc-a`" in text
     assert "Keep as is, start if stopped: `db`" in text
+
+
+PRUNE_COMPOSE = """\
+services:
+  db:
+    image: postgres:16
+    volumes: [data:/var/lib/postgresql/data, logs:/logs]
+    networks: [backend]
+volumes:
+  data: {}
+  logs: {name: shared-logs}
+networks:
+  backend: {}
+"""
+
+
+class PruneExecutor:
+    def __init__(self, *, networks: list[str], volumes: list[str], rm_code: int = 0) -> None:
+        self.compose = PRUNE_COMPOSE
+        self.networks = networks
+        self.volumes = volumes
+        self.rm_code = rm_code
+        self.calls: list[tuple[str, ...]] = []
+
+    async def run(self, argv, *, timeout=None, check=False):
+        args = tuple(str(x) for x in argv)
+        self.calls.append(args)
+        out, rc = "", 0
+        if args[0] == "cat":
+            out = self.compose
+        elif args[1:3] == ("network", "ls"):
+            assert "label=com.docker.compose.project=botman-bots" in args
+            out = "".join(f"{name}\n" for name in self.networks)
+        elif args[1:3] == ("volume", "ls"):
+            out = "".join(f"{name}\n" for name in self.volumes)
+        elif args[2:3] == ("rm",):
+            rc = self.rm_code
+        result = ExecResult(args, rc, out, "")
+        return result.check() if check else result
+
+    def removals(self) -> list[tuple[str, ...]]:
+        return [call for call in self.calls if call[2:3] == ("rm",)]
+
+
+PROJECT_RESOURCES = {
+    "networks": ["botman-bots_default", "botman-bots_backend", "botman-bots_old"],
+    "volumes": ["botman-bots_data", "shared-logs", "botman-bots_cache"],
+}
+
+
+@pytest.mark.asyncio
+async def test_prune_plan_lists_only_undeclared_project_resources() -> None:
+    executor = PruneExecutor(**PROJECT_RESOURCES)
+    service = ComposeAdminService(two_app_config(), executor_factory=lambda _: executor)
+
+    plan = await service.plan_prune("bots", include_volumes=False)
+
+    assert plan.networks == ("botman-bots_old",)
+    assert plan.volumes == ("botman-bots_cache",)
+    await service.prune("bots", plan)
+    assert executor.removals() == [("docker", "network", "rm", "botman-bots_old")]
+
+
+@pytest.mark.asyncio
+async def test_prune_removes_volumes_only_when_included() -> None:
+    executor = PruneExecutor(**PROJECT_RESOURCES)
+    service = ComposeAdminService(two_app_config(), executor_factory=lambda _: executor)
+
+    plan = await service.plan_prune("bots", include_volumes=True)
+    result = await service.prune("bots", plan)
+
+    assert result.ok
+    assert executor.removals() == [
+        ("docker", "network", "rm", "botman-bots_old"),
+        ("docker", "volume", "rm", "botman-bots_cache"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_prune_with_only_unincluded_volumes_is_empty() -> None:
+    executor = PruneExecutor(networks=["botman-bots_default"], volumes=["botman-bots_cache"])
+    service = ComposeAdminService(two_app_config(), executor_factory=lambda _: executor)
+
+    plan = await service.plan_prune("bots", include_volumes=False)
+
+    assert plan.empty
+    assert plan.volumes == ("botman-bots_cache",)
+
+
+@pytest.mark.asyncio
+async def test_prune_reports_failure_when_a_resource_is_in_use() -> None:
+    executor = PruneExecutor(**PROJECT_RESOURCES, rm_code=1)
+    service = ComposeAdminService(two_app_config(), executor_factory=lambda _: executor)
+
+    plan = await service.plan_prune("bots", include_volumes=True)
+    result = await service.prune("bots", plan)
+
+    assert not result.ok
+
+
+@pytest.mark.asyncio
+async def test_prune_refuses_when_compose_changed_after_preview() -> None:
+    from botman.compose import ComposeApplyStaleError
+
+    executor = PruneExecutor(**PROJECT_RESOURCES)
+    service = ComposeAdminService(two_app_config(), executor_factory=lambda _: executor)
+    plan = await service.plan_prune("bots", include_volumes=True)
+    executor.compose += "  old: {}\n"
+
+    with pytest.raises(ComposeApplyStaleError):
+        await service.prune("bots", plan)
+    assert executor.removals() == []
+
+
+def test_prune_plan_rendering_warns_about_volume_data() -> None:
+    from botman.commands.compose_apply import render_prune_plan
+    from botman.compose import ComposePrunePlan
+
+    kept = render_prune_plan(
+        ComposePrunePlan("bots", "x", networks=("n",), volumes=("v",), include_volumes=False)
+    )
+    deleted = render_prune_plan(
+        ComposePrunePlan("bots", "x", networks=(), volumes=("v",), include_volumes=True)
+    )
+
+    assert "kept; run with `volumes: True`" in kept
+    assert "**deleting their data**" in deleted

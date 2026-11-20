@@ -462,3 +462,36 @@ async def test_app_remove_deletes_a_disabled_apps_container_image_and_files(
     assert not env_file.exists()
     assert "app-b" not in store.load().stacks[stack.name].apps
     assert stack.container("app-a") == a_before
+
+
+async def test_compose_prune_removes_dropped_networks_and_only_opted_in_volumes(
+    stack: Stack,
+) -> None:
+    def with_extra_resources(content: str) -> str:
+        data = yaml.safe_load(content)
+        data["services"]["extra"]["volumes"] = ["cache:/cache"]
+        data["services"]["extra"]["networks"] = ["side"]
+        data["volumes"]["cache"] = {}
+        data["networks"] = {"side": {}}
+        return yaml.safe_dump(data, sort_keys=False)
+
+    await stack.upload_compose(with_extra_resources(stack.compose(extra=True)))
+    await stack.compose_apply()
+    network, volume = f"{stack.project}_side", f"{stack.project}_cache"
+    assert _exists((RUNTIME, "network", "inspect", network))
+    assert _exists((RUNTIME, "volume", "inspect", volume))
+    await stack.upload_compose(stack.compose())
+    await stack.compose_apply()
+    service = ComposeAdminService(stack.config)
+
+    plan = await service.plan_prune(stack.name, include_volumes=False)
+    assert (plan.networks, plan.volumes) == ((network,), (volume,))
+    _ok(await service.prune(stack.name, plan))
+    assert not _exists((RUNTIME, "network", "inspect", network))
+    assert _exists((RUNTIME, "volume", "inspect", volume))
+
+    plan = await service.plan_prune(stack.name, include_volumes=True)
+    _ok(await service.prune(stack.name, plan))
+    assert not _exists((RUNTIME, "volume", "inspect", volume))
+    assert _exists((RUNTIME, "volume", "inspect", f"{stack.project}_data"))
+    assert stack.container("app-a").running

@@ -1,4 +1,4 @@
-"""Discord preview/confirm flow for `/config compose apply`.
+"""Discord preview/confirm flows for `/config compose apply` and `/config compose prune`.
 
 `discord` is imported only when a view is built, so command registration stays
 importable without it (see the admin registration tests).
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..compose import ComposeAdminService, ComposeApplyPlan
+from ..compose import ComposeAdminService, ComposeApplyPlan, ComposePrunePlan
 from ..discord_output import bytes_file, present_exec_result
 from .confirm import PREVIEW_TIMEOUT_SEC, Authorize, confirm_view, truncate_message
 
@@ -97,3 +97,48 @@ def apply_now_view(
                 await interaction.followup.send(f"Failed: {exc}", ephemeral=True)
 
     return ApplyNowView()
+
+
+def render_prune_plan(plan: ComposePrunePlan) -> str:
+    lines = [f"**Compose prune for `{plan.stack_name}`**"]
+    if plan.networks:
+        lines.append(f"Remove networks no longer in the file: {_names(plan.networks)}")
+    if plan.volumes:
+        if plan.include_volumes:
+            lines.append(
+                f"Remove volumes no longer in the file, **deleting their data**: {_names(plan.volumes)}"
+            )
+        else:
+            lines.append(
+                f"Volumes no longer in the file (kept; run with `volumes: True` to delete them "
+                f"and their data): {_names(plan.volumes)}"
+            )
+    if plan.empty:
+        lines.append("Nothing to prune.")
+    else:
+        lines.append("Anything a container still uses is refused by the runtime and kept.")
+    return truncate_message("\n".join(lines))
+
+
+async def send_prune_preview(
+    interaction: Any,
+    service: ComposeAdminService,
+    stack_name: str,
+    *,
+    include_volumes: bool,
+    authorize: Authorize,
+) -> None:
+    """Send the prune plan with Prune/Cancel buttons to an already-deferred interaction."""
+
+    plan = await service.plan_prune(stack_name, include_volumes=include_volumes)
+    text = render_prune_plan(plan)
+    if plan.empty:
+        await interaction.followup.send(text, ephemeral=True)
+        return
+
+    async def run(button_interaction: Any) -> None:
+        result = await service.prune(plan.stack_name, plan)
+        await send_exec_reply(button_interaction, "compose prune", plan.stack_name, result)
+
+    view = confirm_view(text, label="Prune", progress="Pruning…", run=run, authorize=authorize)
+    await interaction.followup.send(text, view=view, ephemeral=True)

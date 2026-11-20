@@ -91,7 +91,7 @@ Slash/admin/ephemeral (stack/app-scoped commands infer the stack from the curren
 - `/config server add|edit|test`
 - `/config stack add|edit`
 - `/config app add|edit|remove` (`remove` only for disabled apps; preview + confirm; never volumes)
-- `/config compose upload|show|apply` (`apply` previews, then removes dropped services' containers and runs `up -d` for the rest; never deletes volumes/networks)
+- `/config compose upload|show|apply|prune` (`apply` previews, then removes dropped services' containers and runs `up -d` for the rest; `prune` previews, then removes networks the file dropped, and volumes only with `volumes: True`)
 - `/config git setup APP` / `/config git rotate-key APP`
 - `/config agent sync|status`
 
@@ -106,10 +106,9 @@ See [`VPS_AND_DISCORD_SETUP.md`](VPS_AND_DISCORD_SETUP.md) for the exact onboard
 1. Confirm CI is green on Linux (tests on 3.11-3.13, Ruff, mypy) and record the new test count here.
 2. Run `botman-target-preflight` on each real target, then run actual Linux/cysystemd integration for the live reader and historical exporter, including retained-history and journal-permission checks.
 3. Repeat Docker and Podman Compose acceptance on real targets over SSH (CI covers the local-executor path only).
-4. Run a Discord test-guild acceptance pass for hybrid command registration, threads, webhooks, upload limits, archived/locked thread behavior, the `/config compose apply` and upload **Apply now** buttons, and live-log batching cadence against webhook rate limits.
+4. Run a Discord test-guild acceptance pass for hybrid command registration, threads, webhooks, upload limits, archived/locked thread behavior, the `/config compose apply|prune`, `/config app remove`, and upload **Apply now** buttons, and live-log batching cadence against webhook rate limits.
 5. Exercise `scripts/setup.sh` and `scripts/update.sh` on the real central and second target VPS, including reboot persistence of the rootless Podman socket.
 6. Reconcile runtime-specific findings before v1 completion.
-7. Optionally add an opt-in stack `prune` for volumes/networks no longer referenced by the Compose file.
 
 Do **not** repair or reuse archived `py/agent/log_agent.py` or deployment code as the implementation baseline.
 

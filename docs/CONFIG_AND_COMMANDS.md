@@ -202,6 +202,7 @@ Suggested group structure:
 /config compose upload
 /config compose show
 /config compose apply
+/config compose prune [volumes]
 
 /config app add
 /config app edit
@@ -290,7 +291,12 @@ Configuration changes and Compose uploads do **not** automatically deploy/rebuil
 
 The installed Compose file decides what runs. Upload accepts a file that leaves out a configured app's service; that app is then **disabled**. `/update`, `/apply`, `/rebuild`, `/start`, `/stop`, `/restart`, and `/status` reply that it is disabled (or, when the stack has no Compose file yet, point to `/config compose upload`) before any Git or Compose work. The app keeps its config, env file, releases, deploy key, and Git cache, and `/env` and `/config app edit` still work. Adding the service back and applying re-enables it. Services that are present must still pass the managed-app checks (journald logging/tag, standard build context).
 
-### `/config app remove APP`
+### `/config compose prune [volumes]`
+
+Admin-only, slash-only, ephemeral. It finds networks and volumes labelled with the stack's Compose project (`com.docker.compose.project`) whose runtime name the installed Compose file no longer declares. A declared entry's runtime name is `<project>_<key>`, or its `name:` when set; the implicit `default` network always counts as declared. External networks and volumes carry no project label and are never touched.
+
+The preview lists them with **Prune** / **Cancel**. Networks are removed on confirm. Volumes are only listed unless the command runs with `volumes: True`, and then the preview warns that their data is deleted. On confirm the plan is recomputed under the stack lock and must match the preview. The runtime refuses to remove a network or volume a container still uses, so run `/config compose apply` first to remove containers of dropped services.
+
 
 Admin-only, slash-only, ephemeral, and only for a disabled app (or any app when the stack has no Compose file). It previews what will be deleted, with **Remove** / **Cancel** buttons, then, under the stack lock, re-checks the preview and removes in this order:
 

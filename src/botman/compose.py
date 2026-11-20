@@ -515,6 +515,39 @@ class ComposeApplyPlan:
         return not self.services and not self.orphans
 
 
+@dataclass(frozen=True, slots=True)
+class ComposePrunePlan:
+    """Project volumes/networks the Compose file no longer declares."""
+
+    stack_name: str
+    digest: str
+    networks: tuple[str, ...]
+    volumes: tuple[str, ...]
+    include_volumes: bool
+
+    @property
+    def empty(self) -> bool:
+        return not self.networks and not (self.include_volumes and self.volumes)
+
+
+def declared_resource_names(project: str, compose: dict, kind: str) -> set[str]:
+    """Runtime names of the top-level `volumes`/`networks` a Compose file declares.
+
+    Compose names them `<project>_<key>` unless the entry sets `name:`. The
+    implicit `default` network always counts as declared.
+    """
+
+    entries = compose.get(kind)
+    declared = dict(entries) if isinstance(entries, dict) else {}
+    if kind == "networks":
+        declared.setdefault("default", None)
+    names = set()
+    for key, spec in declared.items():
+        custom = spec.get("name") if isinstance(spec, dict) else None
+        names.add(str(custom) if custom else f"{project}_{key}")
+    return names
+
+
 class ComposeAdminService:
     """Upload/show stack Compose configuration without deploying applications."""
 
@@ -779,6 +812,80 @@ class ComposeAdminService:
         # `ls` exits non-zero when any path is missing but still lists the rest.
         listed = await executor.run(("ls", "-1dL", "--", *paths), timeout=30, check=False)
         return {paths[line] for line in listed.stdout.splitlines() if line in paths}
+
+    async def plan_prune(self, stack_name: str, *, include_volumes: bool) -> ComposePrunePlan:
+        config = self._config()
+        executor = self.executor_factory(self._resolved_for_stack(config, stack_name))
+        return await self._prune_plan(executor, config, stack_name, include_volumes)
+
+    async def prune(self, stack_name: str, expected: ComposePrunePlan) -> ExecResult:
+        """Remove what a previewed prune plan lists, if it still matches.
+
+        The runtime refuses to remove a network or volume a container still
+        uses, so a failure there leaves it in place and is reported.
+        """
+
+        lock = await self.locks.get(stack_name)
+        async with lock:
+            config = self._config()
+            executor = self.executor_factory(self._resolved_for_stack(config, stack_name))
+            plan = await self._prune_plan(executor, config, stack_name, expected.include_volumes)
+            if plan != expected:
+                raise ComposeApplyStaleError(
+                    "the Compose file or the stack changed since the preview; "
+                    "run `/config compose prune` again"
+                )
+            stack = config.stacks[stack_name]
+            runtime = container_runtime_argv(config.servers[stack.server].compose_argv)
+            steps: list[tuple[str, ExecResult]] = []
+            if plan.networks:
+                result = await executor.run((*runtime, "network", "rm", *plan.networks), timeout=120)
+                steps.append(("remove networks", result))
+            if plan.include_volumes and plan.volumes:
+                result = await executor.run((*runtime, "volume", "rm", *plan.volumes), timeout=120)
+                steps.append(("remove volumes", result))
+            if not steps:
+                return ExecResult((), 0, "nothing to prune", "")
+            # Report failure if any step failed, not just the last one.
+            failed = next((result for _, result in steps if not result.ok), None)
+            combined = _combine_steps(*steps)
+            if failed is not None:
+                return ExecResult(combined.argv, failed.returncode, combined.stdout, combined.stderr)
+            return combined
+
+    async def _prune_plan(
+        self, executor: Executor, config: BotmanConfig, stack_name: str, include_volumes: bool
+    ) -> ComposePrunePlan:
+        text = await read_installed_compose_text(executor, config, stack_name)
+        if text is None:
+            raise ComposeTransportError(
+                f"stack `{stack_name}` has no Compose file; upload one with `/config compose upload`"
+            )
+        compose = parse_compose_yaml(text)
+        stack = config.stacks[stack_name]
+        runtime = container_runtime_argv(config.servers[stack.server].compose_argv)
+        found = {}
+        for kind, command in (("networks", "network"), ("volumes", "volume")):
+            listed = await executor.run(
+                (
+                    *runtime, command, "ls",
+                    "--filter", f"label=com.docker.compose.project={stack.project_name}",
+                    "--format", "{{.Name}}",
+                ),
+                timeout=60,
+                check=True,
+            )
+            declared = declared_resource_names(stack.project_name, compose, kind)
+            found[kind] = tuple(
+                sorted(name for name in set(listed.stdout.split()) if name not in declared)
+            )
+        return ComposePrunePlan(
+            stack_name=stack_name,
+            digest=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            networks=found["networks"],
+            volumes=found["volumes"],
+            include_volumes=include_volumes,
+        )
 
     async def show(self, stack_name: str) -> str:
         config = self._config()
