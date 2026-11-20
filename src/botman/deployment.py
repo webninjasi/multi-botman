@@ -213,6 +213,11 @@ class DeploymentService:
                             str(staged),
                             "--no-same-owner",
                             "--no-same-permissions",
+                            # Fresh mtimes: git archive stamps files with the
+                            # commit time, and BuildKit's incremental context
+                            # transfer skips same-size, same-mtime files, so
+                            # quick successive commits could build stale files.
+                            "--touch",
                         ),
                         transcript,
                         "extract release",
@@ -270,15 +275,7 @@ class DeploymentService:
                         raise DeploymentError("Compose build failed; current release restored", transcript)
 
                     up = await executor.run(
-                        (
-                            *compose.base_argv(resolved),
-                            "up",
-                            "-d",
-                            "--no-deps",
-                            resolved.app.service,
-                        ),
-                        timeout=180,
-                        check=False,
+                        compose.recreate_argv(resolved), timeout=180, check=False
                     )
                     transcript.command("compose up", up)
                     if not up.ok:
@@ -462,7 +459,7 @@ class DeploymentService:
         if not build.ok:
             return False
         up = await executor.run(
-            (*compose.base_argv(resolved), "up", "-d", "--no-deps", resolved.app.service),
+            compose.recreate_argv(resolved),
             timeout=180,
             check=False,
         )

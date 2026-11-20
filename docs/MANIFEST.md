@@ -45,12 +45,14 @@ Updated 2026-09-30 for the fresh Botman implementation.
 - `systemd/botman-log-agent.service`
 - `config.example.yaml`
 - `.github/workflows/ci.yml` — clean-checkout Ruff/mypy quality gate plus Python 3.11-3.13 test/compile/wheel verification
+- `.github/workflows/runtime-integration.yml` — real Docker Compose / Podman Compose (docker-compose and podman-compose providers) run of `tests/integration`
 - `scripts/verify_wheel.py` — required-module and console-entry-point wheel check, including target preflight
 
 ## Tests
 
 - `tests/central/`
 - `tests/agent/`
+- `tests/integration/` — real-runtime Compose acceptance; skipped unless `BOTMAN_IT_COMPOSE` is set
 
 Current fresh result: **176 passed**.
 

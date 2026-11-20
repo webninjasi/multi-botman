@@ -257,7 +257,7 @@ async def test_store_backed_rebuild_builds_then_recreates_service(tmp_path) -> N
     result = await service.execute("rebuild", app_name="app-a", channel_id=111)
 
     assert executor.calls[-2][-2:] == ("build", "svc-a")
-    assert executor.calls[-1][-4:] == ("up", "-d", "--no-deps", "svc-a")
+    assert executor.calls[-1][-5:] == ("up", "-d", "--no-deps", "--force-recreate", "svc-a")
     assert result.ok
     assert result.stdout == "[build]\nok\n[up]\nok"
 
@@ -313,3 +313,25 @@ async def test_build_only_operation_does_not_recreate_service() -> None:
 
     assert executor.calls[-1][-2:] == ("build", "svc-a")
     assert not any("up" in call for call in executor.calls)
+
+
+@pytest.mark.asyncio
+async def test_status_falls_back_to_whole_stack_when_ps_rejects_service() -> None:
+    class PodmanComposeLikeExecutor(RecordingExecutor):
+        async def run(self, argv, *, timeout=None, check=False):
+            args = tuple(str(x) for x in argv)
+            self.calls.append(args)
+            if args[-1] == "svc-a":
+                return ExecResult(args, 2, "", "unrecognized arguments: svc-a")
+            return ExecResult(args, 0, "svc-a running\nsvc-b running\n", "")
+
+    config = config_two_apps()
+    executor = PodmanComposeLikeExecutor()
+    manager = ComposeManager(config, executor_factory=lambda _: executor)
+
+    result = await manager.status(resolve_app(config, "bots", "app-a"))
+
+    assert executor.calls[0][-2:] == ("ps", "svc-a")
+    assert executor.calls[1][-1] == "ps"
+    assert result.ok
+    assert result.stdout.startswith("(this Compose provider cannot filter ps by service")

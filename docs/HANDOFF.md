@@ -17,7 +17,7 @@
 - Phase 7 env/config onboarding, including conservative server/stack/app edit UX, is implemented.
 - Phase 8 packaging/docs are in progress; central/agent units, clean-checkout CI, wheel-content verification, target-host preflight, and Ruff/mypy CI gates exist. Ruff and mypy pass locally as of 2026-10-26. Real-host acceptance remains.
 
-Real Docker, Podman, cysystemd/journald, and Discord test-guild acceptance have not yet been run in this build environment.
+Real Docker, Podman, cysystemd/journald, and Discord test-guild acceptance have not yet been run in this build environment. `.github/workflows/runtime-integration.yml` runs Compose deployment/lifecycle acceptance (`tests/integration/`) green in CI on Docker Compose and on Podman with both the docker-compose and podman-compose providers.
 
 The test suite is Linux-only: on Windows, POSIX path, timezone, `fchmod`, and `grp` tests fail. Use CI as the source of truth.
 
@@ -80,7 +80,7 @@ Hybrid slash/prefix:
 - `/apply APP` / `!apply APP` (service-scoped `up -d`; applies env/Compose edits)
 - `/rebuild APP [build_only]` / `!rebuild APP [build_only]` (service-scoped `build` then `up -d` on the active release, i.e. `up -d --build`; `build_only` skips the recreate; for build-time env/args)
 
-All Botman builds pass the app env file as `--env-file` when it exists, so `build.args` `${VAR}` can read `/env` values; `up` does not (see `CONFIG_AND_COMMANDS.md`).
+All Botman builds pass the app env file as `--env-file` when it exists, so `build.args` `${VAR}` can read `/env` values; `up` does not (see `CONFIG_AND_COMMANDS.md`). The `up` after a build (`/update`, its rollback, `/rebuild`) uses `--force-recreate`, because podman-compose otherwise keeps the old container. `/status` falls back to whole-stack `ps` when the provider rejects a service argument.
 - `/update APP` / `!update APP`
 - `/livelogs start|stop APP` / prefix equivalents
 - `/logs tail APP [lines]` / prefix equivalent
@@ -105,7 +105,7 @@ See [`VPS_AND_DISCORD_SETUP.md`](VPS_AND_DISCORD_SETUP.md) for the exact onboard
 
 1. Confirm CI is green on Linux (tests on 3.11-3.13, Ruff, mypy) and record the new test count here.
 2. Run `botman-target-preflight` on each real target, then run actual Linux/cysystemd integration for the live reader and historical exporter, including retained-history and journal-permission checks.
-3. Run real Docker and Podman Compose deployment/lifecycle/failure acceptance.
+3. Repeat Docker and Podman Compose acceptance on real targets over SSH (CI covers the local-executor path only).
 4. Run a Discord test-guild acceptance pass for hybrid command registration, threads, webhooks, upload limits, archived/locked thread behavior, and live-log batching cadence against webhook rate limits.
 5. Exercise `scripts/setup.sh` and `scripts/update.sh` on the real central and second target VPS, including reboot persistence of the rootless Podman socket.
 6. Reconcile runtime-specific findings before v1 completion.

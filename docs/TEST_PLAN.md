@@ -104,6 +104,14 @@ Create a test Compose project with at least two managed services, each from a se
 
 Run against supported Docker Compose and Podman Compose environments.
 
+Automated: `tests/integration/test_compose_runtime.py` covers this section plus Compose upload
+runtime validation, `/apply`, `/rebuild` build args from the app env file, and the journald
+`SYSLOG_IDENTIFIER` tag. `.github/workflows/runtime-integration.yml` runs it on Docker Compose and on
+Podman with both the docker-compose and podman-compose providers. Locally:
+`BOTMAN_IT_COMPOSE="podman compose" pytest -m integration tests/integration` (needs a writable
+`/srv/botman/stacks`). It uses local Git fixtures, a local server, and rootful-runner CI, so it does not
+replace the real-target pass over SSH.
+
 ## Integration — journald
 
 On real supported hosts, first run the target preflight as the management identity. After `/config agent sync`, rerun it with `--require-active --app STACK.APP` for at least one configured app. Then verify:

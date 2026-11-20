@@ -138,9 +138,11 @@ Proposed behavior:
 !update APP
 ```
 
+`/status` runs `compose ps <service>`. podman-compose rejects the service argument, so on failure it falls back to the whole-stack `ps` and says so in the reply.
+
 `/apply` runs `compose up -d --no-deps <service>` against the active release. Compose recreates the container only if its Compose or env config changed, so `/apply` is how env/Compose edits take effect without a new commit. `/restart` keeps the existing container and does not pick up those edits; `/update` is a no-op when the target already runs the fetched commit.
 
-`/rebuild` runs `compose build <service>` (660s timeout, kept under Discord's 15-minute deferred-reply window) and then `compose up -d --no-deps <service>` against the active release, under the stack lock. Use it when an app reads env/Compose values at build time, such as `build.args`, because `/apply` reuses the existing image. A failed build stops before `up`, so the running container is left as it was. In effect this is `up -d --build --no-deps <service>`. It runs as two commands so that only the build gets `--env-file` (below). With `build_only: true` (prefix form: `!rebuild APP yes`) it runs only the build (840s timeout) and leaves the running container on its old image until the next recreate.
+`/rebuild` runs `compose build <service>` (660s timeout, kept under Discord's 15-minute deferred-reply window) and then `compose up -d --no-deps --force-recreate <service>` against the active release (forced because podman-compose does not recreate on a new image; `/update` activation and rollback do the same), under the stack lock. Use it when an app reads env/Compose values at build time, such as `build.args`, because `/apply` reuses the existing image. A failed build stops before `up`, so the running container is left as it was. In effect this is `up -d --build --no-deps <service>`. It runs as two commands so that only the build gets `--env-file` (below). With `build_only: true` (prefix form: `!rebuild APP yes`) it runs only the build (840s timeout) and leaves the running container on its old image until the next recreate.
 
 Compose `env_file:` only reaches the running container, never the image build. So every Botman build (`/rebuild`, `/update`, and the `/update` rollback) passes the app's env file (`env_file`, default `<stack>/env/<app>.env`, the file `/env` edits) as `--env-file`, but only when that file exists. A build-time value must still be declared under `build.args` (and as `ARG` in the Dockerfile):
 

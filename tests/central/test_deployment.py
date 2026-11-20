@@ -190,7 +190,7 @@ async def test_successful_update_targets_only_requested_service() -> None:
     assert result.previous_sha == SHA1
     assert target.current == f"releases/{SHA2}"
     compose_calls = [call for call in target.calls if call[:2] == ("docker", "compose")]
-    assert [call[-2:] for call in compose_calls] == [("build", "svc-a"), ("--no-deps", "svc-a")]
+    assert [call[-2:] for call in compose_calls] == [("build", "svc-a"), ("--force-recreate", "svc-a")]
     assert all("svc-b" not in call for call in compose_calls)
     env_path = "/srv/botman/stacks/bots/env/app-a.env"
     assert ("--env-file", env_path) == compose_calls[0][6:8]

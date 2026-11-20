@@ -1,0 +1,90 @@
+name: Runtime integration
+
+# Real Docker/Podman Compose acceptance for /update, lifecycle commands,
+# /config compose upload, and journald tagging (tests/integration).
+
+# Kept narrow to save runner time: only changes that can affect the
+# runtime path trigger it; run it by hand otherwise.
+on:
+  push:
+    paths:
+      - "src/botman/compose.py"
+      - "src/botman/deployment.py"
+      - "src/botman/executor.py"
+      - "src/botman/models.py"
+      - "tests/integration/**"
+      - ".github/workflows/runtime-integration.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: runtime-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  compose:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: docker compose
+            runtime: docker
+            provider: ""
+          - name: podman compose (docker-compose provider)
+            runtime: podman
+            provider: docker-compose
+          - name: podman compose (podman-compose provider)
+            runtime: podman
+            provider: podman-compose
+    env:
+      BOTMAN_IT_COMPOSE: ${{ matrix.runtime }} compose
+      # Root can read every journal, including rootless Podman's user journal.
+      BOTMAN_IT_JOURNALCTL: sudo journalctl
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e '.[dev]'
+
+      - name: Prepare stack root
+        run: sudo install -d -o "$(id -u)" -g "$(id -g)" /srv/botman/stacks
+
+      - name: Use docker-compose as the Podman Compose provider
+        if: matrix.provider == 'docker-compose'
+        run: |
+          provider=$(command -v docker-compose || echo /usr/libexec/docker/cli-plugins/docker-compose)
+          test -x "$provider"
+          echo "PODMAN_COMPOSE_PROVIDER=$provider" >> "$GITHUB_ENV"
+          # docker-compose talks to Podman through its rootless API socket,
+          # as scripts/setup.sh configures on real targets.
+          systemctl --user enable --now podman.socket
+          test -S "$XDG_RUNTIME_DIR/podman/podman.sock"
+
+      - name: Use podman-compose as the Podman Compose provider
+        if: matrix.provider == 'podman-compose'
+        run: |
+          python -m pip install podman-compose
+          echo "PODMAN_COMPOSE_PROVIDER=$(command -v podman-compose)" >> "$GITHUB_ENV"
+
+      - name: Runtime versions
+        run: |
+          ${{ matrix.runtime }} version
+          $BOTMAN_IT_COMPOSE version
+
+      - name: Integration tests
+        run: python -m pytest -v --tb=short -m integration tests/integration
+
+      - name: Diagnostics
+        if: failure()
+        run: |
+          ${{ matrix.runtime }} ps -a || true
+          ${{ matrix.runtime }} images || true
+          sudo journalctl --no-pager -n 200 || true

@@ -91,6 +91,37 @@ class ComposeManager:
         env_args = ("--env-file", env_path) if probe.ok else ()
         return (*self.base_argv(resolved), *env_args, "build", resolved.app.service)
 
+    def recreate_argv(self, resolved: ResolvedApp) -> tuple[str, ...]:
+        """`up` after a build: always recreate so the new image is used.
+
+        podman-compose recreates only on a Compose config change, not on a new
+        image, so a plain `up -d` would keep running the old build.
+        """
+
+        return (
+            *self.base_argv(resolved),
+            "up", "-d", "--no-deps", "--force-recreate", resolved.app.service,
+        )
+
+    async def _status_unlocked(self, resolved: ResolvedApp) -> ExecResult:
+        """Service-scoped `ps`, falling back to the whole stack.
+
+        podman-compose's `ps` takes no service arguments. The fallback only
+        shows services of this stack, which the channel already authorizes.
+        """
+
+        executor = self.executor_factory(resolved)
+        scoped = await executor.run(
+            (*self.base_argv(resolved), "ps", resolved.app.service), timeout=30
+        )
+        if scoped.ok:
+            return scoped
+        whole = await executor.run((*self.base_argv(resolved), "ps"), timeout=30)
+        if not whole.ok:
+            return scoped
+        note = "(this Compose provider cannot filter ps by service; showing the whole stack)\n"
+        return ExecResult(whole.argv, whole.returncode, note + whole.stdout, whole.stderr)
+
     async def _build_unlocked(self, resolved: ResolvedApp, *, timeout: float) -> ExecResult:
         executor = self.executor_factory(resolved)
         return await executor.run(await self.build_argv(resolved, executor), timeout=timeout)
@@ -122,6 +153,8 @@ class ComposeManager:
     ) -> ExecResult:
         if operation == "rebuild":
             return await self._rebuild_unlocked(resolved)
+        if operation == "status":
+            return await self._status_unlocked(resolved)
         if operation == "build":
             # `/rebuild APP build_only`: the running container keeps its old
             # image until the next recreate. Fits the 15-minute reply window.
@@ -130,7 +163,6 @@ class ComposeManager:
             "start": (("start", resolved.app.service), 60),
             "stop": (("stop", resolved.app.service), 60),
             "restart": (("restart", resolved.app.service), 120),
-            "status": (("ps", resolved.app.service), 30),
             # `up` recreates the container only when its Compose/env config
             # changed, so this applies edits that `restart` would not pick up.
             "apply": (("up", "-d", "--no-deps", resolved.app.service), 180),
@@ -150,7 +182,9 @@ class ComposeManager:
     async def status(self, resolved: ResolvedApp) -> ExecResult:
         # Use the same lock for a consistent view while another stack mutation
         # is in flight. This is intentionally simple for v1.
-        return await self._run_locked(resolved, ("ps", resolved.app.service), timeout=30)
+        lock = await self.locks.get(resolved.stack_name)
+        async with lock:
+            return await self._status_unlocked(resolved)
 
     async def build(self, resolved: ResolvedApp) -> ExecResult:
         lock = await self.locks.get(resolved.stack_name)
@@ -185,8 +219,8 @@ class ComposeManager:
         build = await self._build_unlocked(resolved, timeout=660)
         if not build.ok:
             return _combine_steps(("build", build))
-        up = await self._run_unlocked(
-            resolved, ("up", "-d", "--no-deps", resolved.app.service), timeout=180
+        up = await self.executor_factory(resolved).run(
+            self.recreate_argv(resolved), timeout=180
         )
         return _combine_steps(("build", build), ("up", up))
 
