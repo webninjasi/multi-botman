@@ -66,6 +66,10 @@ def _run(argv: tuple[str, ...], *, cwd: Path | None = None, timeout: float = 120
     return result.stdout.strip()
 
 
+def _exists(argv: tuple[str, ...]) -> bool:
+    return subprocess.run(argv, capture_output=True, timeout=60, check=False).returncode == 0
+
+
 def _git(repo: Path, *args: str) -> str:
     return _run(
         ("git", "-c", "user.name=botman-it", "-c", "user.email=it@botman.invalid", *args),
@@ -429,3 +433,32 @@ async def test_app_removed_from_compose_is_disabled_but_keeps_its_release(stack:
     await stack.compose_apply()
 
     assert stack.container("app-b").running
+
+
+async def test_app_remove_deletes_a_disabled_apps_container_image_and_files(
+    stack: Stack, tmp_path: Path
+) -> None:
+    from botman.app_removal import AppRemovalService
+    from botman.config import ConfigStore
+
+    a_before = stack.container("app-a")
+    env_file = Path(str(stack.config.app_env_path(stack.name, "app-b")))
+    env_file.parent.mkdir(parents=True, exist_ok=True)
+    env_file.write_text("KEY=value\n")
+    images = [f"{stack.project}-svc-b", f"{stack.project}_svc-b"]
+    assert any(_exists((RUNTIME, "image", "inspect", image)) for image in images)
+    store = ConfigStore(tmp_path / "config.yaml")
+    await store.save(stack.config)
+    # Disable app-b without applying, so removal also has to remove its container.
+    await stack.upload_compose(stack.compose(without=("svc-b",)))
+    service = AppRemovalService(store)
+
+    plan = await service.plan(app_name="app-b", channel_id=CHANNEL)
+    result = _ok(await service.remove(app_name="app-b", channel_id=CHANNEL, expected=plan))
+
+    assert stack.containers("svc-b") == [], result.stdout
+    assert not any(_exists((RUNTIME, "image", "inspect", image)) for image in images), result.stdout
+    assert not (stack.root / "apps" / "app-b").exists()
+    assert not env_file.exists()
+    assert "app-b" not in store.load().stacks[stack.name].apps
+    assert stack.container("app-a") == a_before

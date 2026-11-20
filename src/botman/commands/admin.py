@@ -12,7 +12,9 @@ from ..compose import (
 )
 from ..config import ConfigStore
 from ..git import GitAdminService
+from ..app_removal import AppRemovalService
 from ..live_logs import ServerAgentLockRegistry
+from .app_remove import send_removal_preview
 from .compose_apply import apply_now_view, send_apply_preview
 from .replies import send_file_preview
 
@@ -255,6 +257,24 @@ def register_admin_commands(
             await interaction.followup.send(
                 f"App `{app}` updated. No Compose upload, restart, or deployment was performed.",
                 ephemeral=True,
+            )
+        except Exception as exc:
+            await fail(interaction, exc)
+
+    @app_group.command(
+        name="remove", description="Delete a disabled app and everything Botman created for it."
+    )
+    async def app_remove(interaction: discord.Interaction, app: str):
+        if not await begin(interaction):
+            return
+        try:
+            if interaction.channel_id is None:
+                raise ValueError("app removal must be run in a configured stack channel")
+            await send_removal_preview(
+                interaction,
+                AppRemovalService(store, locks=locks, agent_locks=agent_locks),
+                app,
+                authorize=authorize,
             )
         except Exception as exc:
             await fail(interaction, exc)

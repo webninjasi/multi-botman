@@ -6,15 +6,11 @@ importable without it (see the admin registration tests).
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ..compose import ComposeAdminService, ComposeApplyPlan
 from ..discord_output import bytes_file, present_exec_result
-
-Authorize = Callable[[Any], Awaitable[bool]]
-PREVIEW_TIMEOUT_SEC = 300
-MESSAGE_LIMIT = 2000
+from .confirm import PREVIEW_TIMEOUT_SEC, Authorize, confirm_view, truncate_message
 
 
 def _names(services: tuple[str, ...]) -> str:
@@ -42,10 +38,17 @@ def render_apply_plan(plan: ComposeApplyPlan) -> str:
         lines.append("Nothing to apply.")
     else:
         lines.append("Volumes and networks are never deleted.")
-    text = "\n".join(lines)
-    if len(text) > MESSAGE_LIMIT:
-        text = text[: MESSAGE_LIMIT - 2] + " …"
-    return text
+    return truncate_message("\n".join(lines))
+
+
+async def send_exec_reply(interaction: Any, operation: str, subject: str, result) -> None:
+    """Follow up with command output, attaching it when it is long."""
+
+    presentation = present_exec_result(operation, subject, result)
+    kwargs: dict[str, Any] = {}
+    if presentation.attachment_bytes is not None and presentation.attachment_name is not None:
+        kwargs["file"] = bytes_file(presentation.attachment_bytes, presentation.attachment_name)
+    await interaction.followup.send(presentation.content, ephemeral=True, **kwargs)
 
 
 async def send_apply_preview(
@@ -62,52 +65,13 @@ async def send_apply_preview(
     if plan.empty:
         await interaction.followup.send(text, ephemeral=True)
         return
-    view = _confirm_view(service, plan, text, authorize=authorize)
-    await interaction.followup.send(text, view=view, ephemeral=True)
 
-
-async def _run_apply(
-    interaction: Any, service: ComposeAdminService, plan: ComposeApplyPlan
-) -> None:
-    try:
+    async def run(button_interaction: Any) -> None:
         result = await service.apply(plan.stack_name, plan)
-    except Exception as exc:
-        await interaction.followup.send(f"Failed: {exc}", ephemeral=True)
-        return
-    presentation = present_exec_result("compose apply", plan.stack_name, result)
-    kwargs: dict[str, Any] = {}
-    if presentation.attachment_bytes is not None and presentation.attachment_name is not None:
-        kwargs["file"] = bytes_file(presentation.attachment_bytes, presentation.attachment_name)
-    await interaction.followup.send(presentation.content, ephemeral=True, **kwargs)
+        await send_exec_reply(button_interaction, "compose apply", plan.stack_name, result)
 
-
-def _confirm_view(
-    service: ComposeAdminService,
-    plan: ComposeApplyPlan,
-    preview: str,
-    *,
-    authorize: Authorize,
-) -> Any:
-    import discord
-
-    class ApplyConfirmView(discord.ui.View):
-        def __init__(self) -> None:
-            super().__init__(timeout=PREVIEW_TIMEOUT_SEC)
-
-        @discord.ui.button(label="Apply", style=discord.ButtonStyle.danger)
-        async def confirm(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
-            if not await authorize(interaction):
-                return
-            self.stop()
-            await interaction.response.edit_message(content=f"{preview}\n\nApplying…", view=None)
-            await _run_apply(interaction, service, plan)
-
-        @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
-        async def cancel(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
-            self.stop()
-            await interaction.response.edit_message(content=f"{preview}\n\nCancelled.", view=None)
-
-    return ApplyConfirmView()
+    view = confirm_view(text, label="Apply", progress="Applying…", run=run, authorize=authorize)
+    await interaction.followup.send(text, view=view, ephemeral=True)
 
 
 def apply_now_view(

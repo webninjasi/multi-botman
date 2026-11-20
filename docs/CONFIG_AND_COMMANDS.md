@@ -205,6 +205,7 @@ Suggested group structure:
 
 /config app add
 /config app edit
+/config app remove APP
 /config git setup APP
 /config git rotate-key APP
 
@@ -288,6 +289,18 @@ Configuration changes and Compose uploads do **not** automatically deploy/rebuil
 ### Disabled apps
 
 The installed Compose file decides what runs. Upload accepts a file that leaves out a configured app's service; that app is then **disabled**. `/update`, `/apply`, `/rebuild`, `/start`, `/stop`, `/restart`, and `/status` reply that it is disabled (or, when the stack has no Compose file yet, point to `/config compose upload`) before any Git or Compose work. The app keeps its config, env file, releases, deploy key, and Git cache, and `/env` and `/config app edit` still work. Adding the service back and applying re-enables it. Services that are present must still pass the managed-app checks (journald logging/tag, standard build context).
+
+### `/config app remove APP`
+
+Admin-only, slash-only, ephemeral, and only for a disabled app (or any app when the stack has no Compose file). It previews what will be deleted, with **Remove** / **Cancel** buttons, then, under the stack lock, re-checks the preview and removes in this order:
+
+1. the app service's containers (found by Compose labels) and its built image (`<project>-<service>` or podman-compose's `<project>_<service>`, whichever exists);
+2. on the target, `apps/APP/` (releases and `current`) and the app's env file, unless another app in the stack uses the same env file;
+3. on central, the Git cache and the deploy keypair, unless the key is at a custom path outside `deploy_key_root`;
+4. the config entry, then a log-agent sync if the app had live logs (a failed sync is reported with the `/config agent sync` command to rerun);
+5. the app's Discord log webhook, best-effort.
+
+It stops at the first failed step and keeps the config entry, so the command can be run again. Volumes are never deleted, and the agent's per-app journal checkpoint file on the target is left in place.
 
 ### `/config compose apply`
 

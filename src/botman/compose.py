@@ -444,6 +444,43 @@ def container_runtime_argv(compose_argv: tuple[str, ...]) -> tuple[str, ...]:
     )
 
 
+async def project_containers(
+    executor: Executor, config: BotmanConfig, stack_name: str
+) -> dict[str, list[tuple[str, str]]]:
+    """(container ID, config hash) of the stack's Compose project, keyed by service label.
+
+    Uses the container runtime rather than `compose ps`, which only knows the
+    services still in the file and cannot filter by service on podman-compose.
+    """
+
+    stack = config.stacks[stack_name]
+    runtime = container_runtime_argv(config.servers[stack.server].compose_argv)
+    listed = await executor.run(
+        (
+            *runtime, "ps", "-a", "-q", "--no-trunc",
+            "--filter", f"label=com.docker.compose.project={stack.project_name}",
+        ),
+        timeout=60,
+        check=True,
+    )
+    ids = listed.stdout.split()
+    if not ids:
+        return {}
+    labels = (
+        '{{index .Config.Labels "com.docker.compose.service"}} '
+        '{{index .Config.Labels "com.docker.compose.config-hash"}}'
+    )
+    inspected = await executor.run(
+        (*runtime, "inspect", "--format", labels, *ids), timeout=60, check=True
+    )
+    containers: dict[str, list[tuple[str, str]]] = {}
+    for container_id, line in zip(ids, inspected.stdout.splitlines()):
+        service, _, config_hash = line.strip().partition(" ")
+        if service and service != "<no value>":
+            containers.setdefault(service, []).append((container_id, config_hash.strip()))
+    return containers
+
+
 def _depends_on(spec: object) -> tuple[str, ...]:
     if not isinstance(spec, dict):
         return ()
@@ -684,7 +721,7 @@ class ComposeAdminService:
                     skipped[service] = f"depends on skipped `{blocked}`"
                     changed = True
 
-        containers = await self._project_containers(executor, config, stack_name)
+        containers = await project_containers(executor, config, stack_name)
         orphan_ids = {
             service: [cid for cid, _ in found]
             for service, found in containers.items()
@@ -742,43 +779,6 @@ class ComposeAdminService:
         # `ls` exits non-zero when any path is missing but still lists the rest.
         listed = await executor.run(("ls", "-1dL", "--", *paths), timeout=30, check=False)
         return {paths[line] for line in listed.stdout.splitlines() if line in paths}
-
-    @staticmethod
-    async def _project_containers(
-        executor: Executor, config: BotmanConfig, stack_name: str
-    ) -> dict[str, list[tuple[str, str]]]:
-        """(container ID, config hash) of the stack's Compose project, keyed by service label.
-
-        Uses the container runtime rather than `compose ps`, which only knows the
-        services still in the file and cannot filter by service on podman-compose.
-        """
-
-        stack = config.stacks[stack_name]
-        runtime = container_runtime_argv(config.servers[stack.server].compose_argv)
-        listed = await executor.run(
-            (
-                *runtime, "ps", "-a", "-q", "--no-trunc",
-                "--filter", f"label=com.docker.compose.project={stack.project_name}",
-            ),
-            timeout=60,
-            check=True,
-        )
-        ids = listed.stdout.split()
-        if not ids:
-            return {}
-        labels = (
-            '{{index .Config.Labels "com.docker.compose.service"}} '
-            '{{index .Config.Labels "com.docker.compose.config-hash"}}'
-        )
-        inspected = await executor.run(
-            (*runtime, "inspect", "--format", labels, *ids), timeout=60, check=True
-        )
-        containers: dict[str, list[tuple[str, str]]] = {}
-        for container_id, line in zip(ids, inspected.stdout.splitlines()):
-            service, _, config_hash = line.strip().partition(" ")
-            if service and service != "<no value>":
-                containers.setdefault(service, []).append((container_id, config_hash.strip()))
-        return containers
 
     async def show(self, stack_name: str) -> str:
         config = self._config()

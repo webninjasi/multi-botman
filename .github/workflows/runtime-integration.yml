@@ -8,6 +8,7 @@ name: Runtime integration
 on:
   push:
     paths:
+      - "src/botman/app_removal.py"
       - "src/botman/compose.py"
       - "src/botman/deployment.py"
       - "src/botman/executor.py"
