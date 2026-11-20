@@ -280,7 +280,7 @@ def register_admin_commands(
             message = f"Compose configuration for `{stack}` validated and installed."
             if normalized:
                 message += " Runtime `compose config` passed."
-            message += " Run `/apply APP` to recreate affected services."
+            message += " Run `/apply APP` to recreate affected services (`/rebuild APP` for build changes)."
             await interaction.followup.send(message, ephemeral=True)
         except Exception as exc:
             await fail(interaction, exc)

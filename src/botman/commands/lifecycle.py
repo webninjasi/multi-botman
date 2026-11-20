@@ -83,7 +83,7 @@ class LifecycleCommandAdapter:
 
 
 def register_lifecycle_commands(bot: Any, adapter: LifecycleCommandAdapter) -> None:
-    """Register /start, /stop, /restart, /status, /apply and their prefix equivalents."""
+    """Register /start, /stop, /restart, /status, /apply, /rebuild and their prefix equivalents."""
 
     descriptions = {
         "start": "Start one managed app service.",
@@ -91,6 +91,7 @@ def register_lifecycle_commands(bot: Any, adapter: LifecycleCommandAdapter) -> N
         "restart": "Restart one managed app service.",
         "status": "Show Compose status for one managed app service.",
         "apply": "Recreate one app service if its Compose or env config changed.",
+        "rebuild": "Rebuild one app service's image from the active release, then recreate it.",
     }
 
     def callback_for(operation: LifecycleOperation):
@@ -105,3 +106,10 @@ def register_lifecycle_commands(bot: Any, adapter: LifecycleCommandAdapter) -> N
         bot.hybrid_command(name=operation, description=descriptions[operation])(
             callback_for(operation)
         )
+
+    async def rebuild(ctx: Any, app: str, build_only: bool = False) -> None:
+        await adapter.invoke(ctx, "build" if build_only else "rebuild", app)
+
+    rebuild.__name__ = "botman_rebuild"
+    rebuild.__doc__ = descriptions["rebuild"]
+    bot.hybrid_command(name="rebuild", description=descriptions["rebuild"])(rebuild)

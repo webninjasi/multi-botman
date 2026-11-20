@@ -258,7 +258,7 @@ class DeploymentService:
                     await note("current release switched")
 
                     build = await executor.run(
-                        (*compose.base_argv(resolved), "build", resolved.app.service),
+                        await compose.build_argv(resolved, executor),
                         timeout=900,
                         check=False,
                     )
@@ -454,7 +454,7 @@ class DeploymentService:
         compose: ComposeManager,
     ) -> bool:
         build = await executor.run(
-            (*compose.base_argv(resolved), "build", resolved.app.service),
+            await compose.build_argv(resolved, executor),
             timeout=900,
             check=False,
         )

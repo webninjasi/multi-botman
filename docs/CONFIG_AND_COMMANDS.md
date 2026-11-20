@@ -131,11 +131,30 @@ Proposed behavior:
 /apply APP
 !apply APP
 
+/rebuild APP [build_only]
+!rebuild APP [build_only]
+
 /update APP
 !update APP
 ```
 
 `/apply` runs `compose up -d --no-deps <service>` against the active release. Compose recreates the container only if its Compose or env config changed, so `/apply` is how env/Compose edits take effect without a new commit. `/restart` keeps the existing container and does not pick up those edits; `/update` is a no-op when the target already runs the fetched commit.
+
+`/rebuild` runs `compose build <service>` (660s timeout, kept under Discord's 15-minute deferred-reply window) and then `compose up -d --no-deps <service>` against the active release, under the stack lock. Use it when an app reads env/Compose values at build time, such as `build.args`, because `/apply` reuses the existing image. A failed build stops before `up`, so the running container is left as it was. In effect this is `up -d --build --no-deps <service>`. It runs as two commands so that only the build gets `--env-file` (below). With `build_only: true` (prefix form: `!rebuild APP yes`) it runs only the build (840s timeout) and leaves the running container on its old image until the next recreate.
+
+Compose `env_file:` only reaches the running container, never the image build. So every Botman build (`/rebuild`, `/update`, and the `/update` rollback) passes the app's env file (`env_file`, default `<stack>/env/<app>.env`, the file `/env` edits) as `--env-file`, but only when that file exists. A build-time value must still be declared under `build.args` (and as `ARG` in the Dockerfile):
+
+```yaml
+services:
+  app:
+    build:
+      context: ./apps/app/current
+      args:
+        VITE_API_URL: ${VITE_API_URL}
+    env_file: env/app.env
+```
+
+`--env-file` replaces Compose's default stack-root `.env` for that build, and it applies to interpolation across the whole Compose file. `${VAR}` references that only another app's env file defines resolve empty during this build (Compose prints a warning). `up` does not get `--env-file`. Docker Compose leaves `build` out of the config hash it uses to decide whether to recreate a container, so `up` and `/apply` still treat the container as unchanged.
 
 ### Logs group
 
@@ -255,7 +274,7 @@ Rules:
 - upload size sanity limit
 - env changes never auto-restart/deploy
 - env upload/set/unset serialize against lifecycle/deployment work for that stack; set/unset hold the lock across read-modify-write
-- user explicitly runs `/apply` (or `/update` for new code) when ready; `/restart` does not reload env
+- user explicitly runs `/apply` (or `/rebuild` when the value is used at build time, `/update` for new code) when ready; `/restart` does not reload env
 
 ## Config/Compose changes
 

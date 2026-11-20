@@ -15,7 +15,7 @@ from .models import BotmanConfig, LocalServerConfig, SSHServerConfig
 from .routing import ResolvedApp, authorize_app_channel
 
 MAX_COMPOSE_BYTES = 512 * 1024
-LifecycleOperation = Literal["start", "stop", "restart", "status", "apply"]
+LifecycleOperation = Literal["start", "stop", "restart", "status", "apply", "rebuild", "build"]
 
 
 class ComposeValidationError(ValueError):
@@ -75,6 +75,26 @@ class ComposeManager:
             str(self.config.compose_path(resolved.stack_name)),
         )
 
+    async def build_argv(
+        self, resolved: ResolvedApp, executor: Executor
+    ) -> tuple[str, ...]:
+        """`compose build` argv that interpolates `${VAR}` from the app env file.
+
+        Compose `env_file:` only reaches the running container, so build args
+        would otherwise not see values managed with `/env`. `--env-file` is
+        passed only to builds (not `up`) and only when the file exists, because
+        Compose rejects a missing `--env-file`.
+        """
+
+        env_path = str(self.config.app_env_path(resolved.stack_name, resolved.name))
+        probe = await executor.run(("test", "-f", env_path), timeout=30, check=False)
+        env_args = ("--env-file", env_path) if probe.ok else ()
+        return (*self.base_argv(resolved), *env_args, "build", resolved.app.service)
+
+    async def _build_unlocked(self, resolved: ResolvedApp, *, timeout: float) -> ExecResult:
+        executor = self.executor_factory(resolved)
+        return await executor.run(await self.build_argv(resolved, executor), timeout=timeout)
+
     async def _run_unlocked(
         self,
         resolved: ResolvedApp,
@@ -100,6 +120,12 @@ class ComposeManager:
     async def execute_unlocked(
         self, operation: LifecycleOperation, resolved: ResolvedApp
     ) -> ExecResult:
+        if operation == "rebuild":
+            return await self._rebuild_unlocked(resolved)
+        if operation == "build":
+            # `/rebuild APP build_only`: the running container keeps its old
+            # image until the next recreate. Fits the 15-minute reply window.
+            return await self._build_unlocked(resolved, timeout=840)
         tails: dict[LifecycleOperation, tuple[tuple[str, ...], float]] = {
             "start": (("start", resolved.app.service), 60),
             "stop": (("stop", resolved.app.service), 60),
@@ -127,7 +153,9 @@ class ComposeManager:
         return await self._run_locked(resolved, ("ps", resolved.app.service), timeout=30)
 
     async def build(self, resolved: ResolvedApp) -> ExecResult:
-        return await self._run_locked(resolved, ("build", resolved.app.service), timeout=900)
+        lock = await self.locks.get(resolved.stack_name)
+        async with lock:
+            return await self._build_unlocked(resolved, timeout=900)
 
     async def up(self, resolved: ResolvedApp) -> ExecResult:
         return await self._run_locked(
@@ -136,6 +164,46 @@ class ComposeManager:
 
     async def apply(self, resolved: ResolvedApp) -> ExecResult:
         return await self.up(resolved)
+
+    async def rebuild(self, resolved: ResolvedApp) -> ExecResult:
+        lock = await self.locks.get(resolved.stack_name)
+        async with lock:
+            return await self._rebuild_unlocked(resolved)
+
+    async def _rebuild_unlocked(self, resolved: ResolvedApp) -> ExecResult:
+        """Rebuild the active release's image, then recreate the service.
+
+        Equivalent to `up -d --build --no-deps <service>`, split in two so only
+        the build gets `--env-file` (see `build_argv`). For apps whose build
+        reads env/Compose values (build args), which `apply` cannot pick up
+        because it reuses the existing image. Stops at a failed build so the
+        running container is left untouched.
+        """
+
+        # build + up must finish inside Discord's 15-minute deferred-reply
+        # window, so this is shorter than the 900s `/update` build.
+        build = await self._build_unlocked(resolved, timeout=660)
+        if not build.ok:
+            return _combine_steps(("build", build))
+        up = await self._run_unlocked(
+            resolved, ("up", "-d", "--no-deps", resolved.app.service), timeout=180
+        )
+        return _combine_steps(("build", build), ("up", up))
+
+
+def _combine_steps(*steps: tuple[str, ExecResult]) -> ExecResult:
+    """Merge multi-step output into one result; the last step decides status."""
+
+    def joined(stream: str) -> str:
+        parts = []
+        for label, result in steps:
+            text = getattr(result, stream).strip()
+            if text:
+                parts.append(f"[{label}]\n{text}")
+        return "\n".join(parts)
+
+    last = steps[-1][1]
+    return ExecResult(last.argv, last.returncode, joined("stdout"), joined("stderr"))
 
 
 class LifecycleService:

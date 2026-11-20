@@ -61,7 +61,7 @@ Read [`DECISIONS.md`](DECISIONS.md) for full detail. Key constraints:
 - Live logging has no unbounded producer queue; delivery backpressure stops that app from reading ahead.
 - Cursor advances only after all Discord segments representing the journal entry are acknowledged.
 - New/long-gap live sessions tail instead of flooding missed history; historical `/logs download` is the recovery path.
-- Env/config changes do not implicitly restart/deploy apps (`/apply APP` applies them explicitly); runtime-affecting stack/env/Git mutations serialize with stack operations, and queued lifecycle/deploy/Compose work reloads config after obtaining the lock.
+- Env/config changes do not implicitly restart/deploy apps (`/apply APP` or, for build-time values, `/rebuild APP` applies them explicitly); runtime-affecting stack/env/Git mutations serialize with stack operations, and queued lifecycle/deploy/Compose work reloads config after obtaining the lock.
 - Every slash/hybrid invocation must get a reply; `commands/errors.py` covers unhandled exceptions with a generic message (exception type only, never its text).
 - Admin/secret workflows are slash-only and ephemeral; lifecycle/update/log UX remains hybrid where useful.
 
@@ -78,6 +78,9 @@ Hybrid slash/prefix:
 - `/restart APP` / `!restart APP`
 - `/status APP` / `!status APP`
 - `/apply APP` / `!apply APP` (service-scoped `up -d`; applies env/Compose edits)
+- `/rebuild APP [build_only]` / `!rebuild APP [build_only]` (service-scoped `build` then `up -d` on the active release, i.e. `up -d --build`; `build_only` skips the recreate; for build-time env/args)
+
+All Botman builds pass the app env file as `--env-file` when it exists, so `build.args` `${VAR}` can read `/env` values; `up` does not (see `CONFIG_AND_COMMANDS.md`).
 - `/update APP` / `!update APP`
 - `/livelogs start|stop APP` / prefix equivalents
 - `/logs tail APP [lines]` / prefix equivalent

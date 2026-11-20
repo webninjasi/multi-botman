@@ -192,6 +192,9 @@ async def test_successful_update_targets_only_requested_service() -> None:
     compose_calls = [call for call in target.calls if call[:2] == ("docker", "compose")]
     assert [call[-2:] for call in compose_calls] == [("build", "svc-a"), ("--no-deps", "svc-a")]
     assert all("svc-b" not in call for call in compose_calls)
+    env_path = "/srv/botman/stacks/bots/env/app-a.env"
+    assert ("--env-file", env_path) == compose_calls[0][6:8]
+    assert "--env-file" not in compose_calls[1]
     assert b"deployment active" in result.transcript
 
 

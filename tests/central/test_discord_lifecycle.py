@@ -81,9 +81,21 @@ async def test_registered_hybrid_callbacks_share_adapter_boundary() -> None:
     bot = FakeBot()
     register_lifecycle_commands(bot, adapter)
 
-    assert set(bot.commands) == {"start", "stop", "restart", "status", "apply"}
+    assert set(bot.commands) == {"start", "stop", "restart", "status", "apply", "rebuild"}
     for operation, (callback, description) in bot.commands.items():
         ctx = FakeContext(321)
         await callback(ctx, "app-a")
         assert service.calls[-1] == (operation, "app-a", 321)
         assert description
+
+
+@pytest.mark.asyncio
+async def test_rebuild_build_only_maps_to_build_operation() -> None:
+    service = FakeLifecycleService()
+    bot = FakeBot()
+    register_lifecycle_commands(bot, LifecycleCommandAdapter(service))
+    callback, _ = bot.commands["rebuild"]
+
+    await callback(FakeContext(321), "app-a", build_only=True)
+
+    assert service.calls[-1] == ("build", "app-a", 321)

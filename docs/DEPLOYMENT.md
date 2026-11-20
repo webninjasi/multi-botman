@@ -91,7 +91,7 @@ Use a per-stack operation lock.
 9. Rename temp release directory to `releases/<sha>`.
 10. Record previous `current` target.
 11. Atomically switch `current` symlink to the new release.
-12. Run Compose build for **only** the target service. Existing container continues running its old image during build.
+12. Run Compose build for **only** the target service, passing the app env file as `--env-file` when it exists so `build.args` can interpolate `/env` values (see [`CONFIG_AND_COMMANDS.md`](CONFIG_AND_COMMANDS.md)). Existing container continues running its old image during build.
 13. If build fails:
     - restore `current` symlink to previous release;
     - report failure;
@@ -135,7 +135,7 @@ Upload flow:
 5. validate managed app journald logging convention (`driver: journald`, expected tag)
 6. validate managed app build context follows the standard release layout where the service is Git-deployed
 7. run runtime `compose config` against the target after upload where feasible
-8. never auto-rebuild/restart apps merely because Compose config changed; the operator runs `/apply APP` explicitly
+8. never auto-rebuild/restart apps merely because Compose config changed; the operator runs `/apply APP` (or `/rebuild APP` for build-time changes) explicitly
 
 When a new app is added after the Compose file, validate that app's service against the existing Compose file.
 
@@ -161,7 +161,7 @@ Do not route Compose build/up output through the journald live-log daemon. Runti
 
 ## Lifecycle command output
 
-- `/start`, `/stop`, `/restart`, `/status`, `/apply`: output goes directly to the stack command channel, not a deployment thread.
+- `/start`, `/stop`, `/restart`, `/status`, `/apply`, `/rebuild`: output goes directly to the stack command channel, not a deployment thread.
 - Capture stdout/stderr and use the shared Discord text formatter for concise output.
 - If unexpectedly long, attach the full command transcript rather than silently throwing it away.
 

@@ -100,7 +100,8 @@ async def test_compose_argv_is_stack_scoped_and_service_scoped() -> None:
         (*base, "stop", "svc-a"),
         (*base, "restart", "svc-a"),
         (*base, "ps", "svc-a"),
-        (*base, "build", "svc-a"),
+        ("test", "-f", "/srv/botman/stacks/bots/env/app-a.env"),
+        (*base, "--env-file", "/srv/botman/stacks/bots/env/app-a.env", "build", "svc-a"),
         (*base, "up", "-d", "--no-deps", "svc-a"),
         (*base, "up", "-d", "--no-deps", "svc-a"),
     ]
@@ -241,3 +242,74 @@ async def test_store_backed_apply_runs_service_scoped_up(tmp_path) -> None:
     await service.execute("apply", app_name="app-a", channel_id=111)
 
     assert executor.calls[-1][-4:] == ("up", "-d", "--no-deps", "svc-a")
+
+
+@pytest.mark.asyncio
+async def test_store_backed_rebuild_builds_then_recreates_service(tmp_path) -> None:
+    from botman.config import ConfigStore
+
+    store = ConfigStore(tmp_path / "config.yaml")
+    await store.save(config_two_apps())
+    executor = RecordingExecutor()
+    service = LifecycleService(store)
+    service.compose.executor_factory = lambda _: executor
+
+    result = await service.execute("rebuild", app_name="app-a", channel_id=111)
+
+    assert executor.calls[-2][-2:] == ("build", "svc-a")
+    assert executor.calls[-1][-4:] == ("up", "-d", "--no-deps", "svc-a")
+    assert result.ok
+    assert result.stdout == "[build]\nok\n[up]\nok"
+
+
+@pytest.mark.asyncio
+async def test_rebuild_stops_after_failed_build() -> None:
+    config = config_two_apps()
+
+    class FailingBuildExecutor(RecordingExecutor):
+        async def run(self, argv, *, timeout=None, check=False):
+            result = await super().run(argv, timeout=timeout, check=check)
+            if "build" in result.argv:
+                return ExecResult(result.argv, 1, "", "boom")
+            return result
+
+    executor = FailingBuildExecutor()
+    manager = ComposeManager(config, executor_factory=lambda _: executor)
+
+    result = await manager.rebuild(resolve_app(config, "bots", "app-a"))
+
+    assert [call[-2:] for call in executor.calls if call[0] != "test"] == [("build", "svc-a")]
+    assert not result.ok
+    assert result.stderr == "[build]\nboom"
+
+
+@pytest.mark.asyncio
+async def test_build_skips_env_file_when_app_env_is_missing() -> None:
+    config = config_two_apps()
+
+    class NoEnvExecutor(RecordingExecutor):
+        async def run(self, argv, *, timeout=None, check=False):
+            result = await super().run(argv, timeout=timeout, check=check)
+            if result.argv[0] == "test":
+                return ExecResult(result.argv, 1, "", "")
+            return result
+
+    executor = NoEnvExecutor()
+    manager = ComposeManager(config, executor_factory=lambda _: executor)
+
+    await manager.build(resolve_app(config, "bots", "app-a"))
+
+    assert "--env-file" not in executor.calls[-1]
+    assert executor.calls[-1][-2:] == ("build", "svc-a")
+
+
+@pytest.mark.asyncio
+async def test_build_only_operation_does_not_recreate_service() -> None:
+    config = config_two_apps()
+    executor = RecordingExecutor()
+    manager = ComposeManager(config, executor_factory=lambda _: executor)
+
+    await manager.execute_unlocked("build", resolve_app(config, "bots", "app-a"))
+
+    assert executor.calls[-1][-2:] == ("build", "svc-a")
+    assert not any("up" in call for call in executor.calls)
