@@ -131,11 +131,11 @@ Upload flow:
 1. receive attachment ephemerally/admin-only
 2. parse YAML safely
 3. store as standard target filename (proposed `compose.yml`)
-4. validate all currently configured managed app service names exist
+4. a configured managed app whose service is absent is disabled, not rejected (see [`CONFIG_AND_COMMANDS.md`](CONFIG_AND_COMMANDS.md))
 5. validate managed app journald logging convention (`driver: journald`, expected tag)
 6. validate managed app build context follows the standard release layout where the service is Git-deployed
 7. run runtime `compose config` against the target after upload where feasible
-8. never auto-rebuild/restart apps merely because Compose config changed; the operator runs `/apply APP` (or `/rebuild APP` for build-time changes) explicitly
+8. never auto-rebuild/restart apps merely because Compose config changed; the operator runs `/config compose apply` for the stack, `/apply APP` for one app, or `/rebuild APP` for build-time changes, explicitly
 
 When a new app is added after the Compose file, validate that app's service against the existing Compose file.
 

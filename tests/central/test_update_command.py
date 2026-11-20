@@ -149,3 +149,20 @@ def test_update_registers_as_hybrid_command() -> None:
     bot = FakeBot()
     register_update_command(bot, UpdateCommandAdapter(FakeDeploymentService()))
     assert set(bot.commands) == {"update"}
+
+
+@pytest.mark.asyncio
+async def test_update_of_disabled_app_replies_plainly_without_thread() -> None:
+    from botman.compose import AppDisabledError
+
+    class DisabledService(FakeDeploymentService):
+        async def update(self, *, app_name, channel_id, progress=None):
+            raise AppDisabledError(f"`{app_name}` is disabled")
+
+    ctx = FakeContext(111)
+
+    await UpdateCommandAdapter(DisabledService()).invoke(ctx, "app-a")
+
+    assert [content for content, _ in ctx.sent] == ["`app-a` is disabled"]
+    assert ctx.messages[0].threads == []
+    assert ctx.channel.threads == []

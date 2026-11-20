@@ -99,3 +99,18 @@ async def test_rebuild_build_only_maps_to_build_operation() -> None:
     await callback(FakeContext(321), "app-a", build_only=True)
 
     assert service.calls[-1] == ("build", "app-a", 321)
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_adapter_reports_disabled_app() -> None:
+    from botman.compose import AppDisabledError
+
+    class DisabledService(FakeLifecycleService):
+        async def execute(self, operation, *, app_name, channel_id):
+            raise AppDisabledError(f"`{app_name}` is disabled")
+
+    ctx = FakeContext(111)
+
+    await LifecycleCommandAdapter(DisabledService()).invoke(ctx, "status", "app-a")
+
+    assert ctx.sent[0][0] == "`app-a` is disabled"

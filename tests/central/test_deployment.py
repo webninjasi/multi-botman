@@ -90,6 +90,7 @@ class FakeTargetExecutor:
         self.build_codes = list(build_codes or [0])
         self.up_codes = list(up_codes or [0])
         self.extract_code = extract_code
+        self.compose = "services: {svc-a: {}, svc-b: {}}\n"
         self.files: dict[str, bytes] = {}
         self.links: dict[str, str] = {}
         self.releases: set[str] = set()
@@ -108,7 +109,9 @@ class FakeTargetExecutor:
         out = ""
         err = ""
 
-        if args[0] == "readlink":
+        if args[0] == "cat":
+            out = self.compose
+        elif args[0] == "readlink":
             if self.current is None:
                 rc = 1
             else:
@@ -173,6 +176,24 @@ async def test_same_sha_is_noop_before_archive_or_compose() -> None:
     assert git.fetch_calls == 1
     assert git.archive_calls == 0
     assert not any(call[:2] == ("docker", "compose") for call in target.calls)
+
+
+@pytest.mark.asyncio
+async def test_disabled_app_is_rejected_before_git_or_progress() -> None:
+    from botman.compose import AppDisabledError
+
+    git = FakeGit()
+    target = FakeTargetExecutor()
+    target.compose = "services: {svc-b: {}}\n"
+    service = DeploymentService(config(), git=git, executor_factory=lambda _: target)
+    notes: list[str] = []
+
+    with pytest.raises(AppDisabledError, match="`app-a` is disabled"):
+        await service.update(app_name="app-a", channel_id=111, progress=notes.append)
+
+    assert git.fetch_calls == 0
+    assert notes == []
+    assert [call[0] for call in target.calls] == ["cat"]
 
 
 @pytest.mark.asyncio

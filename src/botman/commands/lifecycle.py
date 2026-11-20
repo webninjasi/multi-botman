@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from ..compose import LifecycleOperation, LifecycleService
+from ..compose import AppDisabledError, LifecycleOperation, LifecycleService
 from ..discord_output import bytes_file, present_exec_result
 from ..executor import CommandError, CommandTimeout
 from ..routing import ChannelAuthorizationError
@@ -46,6 +46,9 @@ class LifecycleCommandAdapter:
             return
         except KeyError:
             await self._send(ctx, f"Unknown app: `{app_name}`")
+            return
+        except AppDisabledError as exc:
+            await self._send(ctx, str(exc))
             return
         except CommandTimeout as exc:
             await self._send(ctx, f"`{operation}` timed out after {exc.timeout:g}s for `{app_name}`.")

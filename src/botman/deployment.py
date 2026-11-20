@@ -13,7 +13,12 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Callable, Literal
 
-from .compose import ComposeManager, StackLockRegistry, executor_for_resolved_app
+from .compose import (
+    ComposeManager,
+    StackLockRegistry,
+    executor_for_resolved_app,
+    require_enabled,
+)
 from .config import ConfigStore
 from .executor import ExecResult, Executor
 from .git import GitError, GitRepositoryManager
@@ -117,6 +122,9 @@ class DeploymentService:
             archive_path: Path | None = None
             remote_archive: PurePosixPath | None = None
             staged: PurePosixPath | None = None
+            # Before any progress note, so a disabled app gets a plain reply
+            # instead of a deployment thread.
+            await require_enabled(executor, config, resolved)
             try:
                 await note(f"fetching {app_name}:{resolved.app.git.branch}")
                 try:

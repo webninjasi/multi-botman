@@ -24,7 +24,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from botman.compose import ComposeAdminService, LifecycleService, LifecycleOperation
+from botman.compose import (
+    AppDisabledError,
+    ComposeAdminService,
+    LifecycleOperation,
+    LifecycleService,
+)
 from botman.deployment import DeploymentError, DeploymentResult, DeploymentService
 from botman.executor import ExecResult
 from botman.git import GitRevision
@@ -68,6 +73,10 @@ def _git(repo: Path, *args: str) -> str:
     )
 
 
+def _output(result: ExecResult | None) -> str:
+    return "" if result is None else f"{result.stdout}\n{result.stderr}"
+
+
 def _ok(result: ExecResult) -> ExecResult:
     assert result.ok, f"{shlex.join(result.argv)}\n{result.stdout}\n{result.stderr}"
     return result
@@ -99,6 +108,7 @@ class Stack:
     name: str
     config: BotmanConfig
     repos: dict[str, Path]
+    last_apply: ExecResult | None = None
 
     @property
     def project(self) -> str:
@@ -111,9 +121,17 @@ class Stack:
     def log_identifier(self, app: str) -> str:
         return self.config.stacks[self.name].apps[app].log_identifier
 
-    def compose(self, *, app_a_environment: dict[str, str] | None = None) -> str:
+    def compose(
+        self,
+        *,
+        app_a_environment: dict[str, str] | None = None,
+        without: tuple[str, ...] = (),
+        extra: bool = False,
+    ) -> str:
         services: dict[str, dict] = {}
         for app, service in SERVICES.items():
+            if service in without:
+                continue
             services[service] = {
                 "build": {
                     "context": f"./apps/{app}/current",
@@ -125,9 +143,17 @@ class Stack:
                 },
                 "stop_grace_period": "5s",
             }
-        services["svc-a"]["volumes"] = ["data:/data"]
+        if "svc-a" in services:
+            services["svc-a"]["volumes"] = ["data:/data"]
         if app_a_environment:
             services["svc-a"]["environment"] = app_a_environment
+        if extra:
+            # A service that is not a managed app, like a database.
+            services["extra"] = {
+                "image": BASE_IMAGE,
+                "command": ["sh", "-c", "trap 'exit 0' TERM; while :; do sleep 1; done"],
+                "stop_grace_period": "5s",
+            }
         return yaml.safe_dump({"services": services, "volumes": {"data": {}}}, sort_keys=False)
 
     def commit(self, app: str, version: str, *, broken: bool = False) -> str:
@@ -165,11 +191,22 @@ class Stack:
     async def upload_compose(self, content: str) -> None:
         _ok(await ComposeAdminService(self.config).upload(self.name, content))
 
+    async def compose_apply(self):
+        service = ComposeAdminService(self.config)
+        plan = await service.plan_apply(self.name)
+        self.last_apply = _ok(await service.apply(self.name, plan))
+        return plan
+
     def current(self, app: str) -> str:
         return os.readlink(self.root / "apps" / app / "current")
 
     def container(self, app: str) -> ContainerState:
-        """Look the container up by Compose labels so any provider works."""
+        matches = self.containers(SERVICES[app])
+        assert len(matches) == 1, f"expected one {SERVICES[app]} container, got {matches}"
+        return matches[0]
+
+    def containers(self, service: str) -> list[ContainerState]:
+        """Look containers up by Compose labels so any provider works."""
 
         ids = _run(
             (
@@ -188,10 +225,9 @@ class Stack:
                     container_id,
                 )
             ).split(" ", 2)
-            if fields[0] == SERVICES[app]:
+            if fields[0] == service:
                 matches.append(ContainerState(container_id, fields[1] == "true", fields[2]))
-        assert len(matches) == 1, f"expected one {SERVICES[app]} container, got {matches}"
-        return matches[0]
+        return matches
 
     def exec(self, app: str, *argv: str) -> str:
         return _run((RUNTIME, "exec", self.container(app).id, *argv))
@@ -348,3 +384,48 @@ async def test_container_output_reaches_journald_under_the_log_identifier(stack:
             break
         time.sleep(1)
     assert "botman-it version=v1" in output, output
+
+
+async def test_compose_apply_adds_new_services_and_removes_dropped_ones(stack: Stack) -> None:
+    apps_before = {app: stack.container(app) for app in SERVICES}
+    await stack.upload_compose(stack.compose(extra=True))
+
+    plan = await stack.compose_apply()
+
+    assert plan.services == ("svc-a", "svc-b", "extra")
+    assert plan.orphans == ()
+    [extra] = stack.containers("extra")
+    assert extra.running
+    # `up` leaves services whose config did not change alone.
+    output = _output(stack.last_apply)
+    await stack.compose_apply()
+    again = _output(stack.last_apply)
+    assert stack.containers("extra") == [extra], again
+    assert {app: stack.container(app) for app in SERVICES} == apps_before, output
+
+    await stack.upload_compose(stack.compose())
+    plan = await stack.compose_apply()
+
+    assert plan.orphans == ("extra",)
+    assert stack.containers("extra") == []
+    assert {app: stack.container(app) for app in SERVICES} == apps_before
+
+
+async def test_app_removed_from_compose_is_disabled_but_keeps_its_release(stack: Stack) -> None:
+    a_before = stack.container("app-a")
+    release = stack.current("app-b")
+    await stack.upload_compose(stack.compose(without=("svc-b",)))
+
+    plan = await stack.compose_apply()
+
+    assert plan.orphans == ("svc-b",)
+    assert stack.containers("svc-b") == []
+    assert stack.container("app-a") == a_before
+    with pytest.raises(AppDisabledError, match="`app-b` is disabled"):
+        await stack.lifecycle("start", "app-b")
+    assert stack.current("app-b") == release
+
+    await stack.upload_compose(stack.compose())
+    await stack.compose_apply()
+
+    assert stack.container("app-b").running

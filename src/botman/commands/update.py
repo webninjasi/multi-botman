@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from ..compose import AppDisabledError
 from ..deployment import DeploymentError, DeploymentService
 from ..discord_output import attachment_parts, discord_files
 from ..git import GitError
@@ -89,6 +90,9 @@ class UpdateCommandAdapter:
             return
         except KeyError:
             await self._send(ctx, f"Unknown app: `{app_name}`")
+            return
+        except AppDisabledError as exc:
+            await self._send(ctx, str(exc))
             return
         except (DeploymentError, GitError) as exc:
             target = await failure_target()

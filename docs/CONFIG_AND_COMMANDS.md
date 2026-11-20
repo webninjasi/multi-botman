@@ -201,6 +201,7 @@ Suggested group structure:
 /config stack edit
 /config compose upload
 /config compose show
+/config compose apply
 
 /config app add
 /config app edit
@@ -283,5 +284,31 @@ Rules:
 ## Config/Compose changes
 
 Configuration changes and Compose uploads do **not** automatically deploy/rebuild managed apps.
+
+### Disabled apps
+
+The installed Compose file decides what runs. Upload accepts a file that leaves out a configured app's service; that app is then **disabled**. `/update`, `/apply`, `/rebuild`, `/start`, `/stop`, `/restart`, and `/status` reply that it is disabled (or, when the stack has no Compose file yet, point to `/config compose upload`) before any Git or Compose work. The app keeps its config, env file, releases, deploy key, and Git cache, and `/env` and `/config app edit` still work. Adding the service back and applying re-enables it. Services that are present must still pass the managed-app checks (journald logging/tag, standard build context).
+
+### `/config compose apply`
+
+Admin-only, slash-only, ephemeral. It brings the stack in line with its Compose file:
+
+1. Read the installed file and build a plan:
+   - **up**: every service in the file, except:
+     - managed apps not deployed yet (no `apps/APP/current`), because `up` would try to build from a missing context; the plan says to run `/update APP`;
+     - services with `profiles`, which a plain `up` does not start;
+     - services that `depends_on` a skipped service, because `up SERVICE` would pull the dependency in.
+   - **remove**: containers labelled with the stack's Compose project whose service is no longer in the file (found with `docker`/`podman`, derived from the server's `compose_argv`, since `compose ps` does not see dropped services).
+2. Show the plan with **Apply** / **Cancel** buttons (5-minute timeout).
+3. On **Apply**, under the stack lock: recompute the plan and refuse if it differs from the preview; `docker|podman rm -f` the orphaned containers; then bring the services up (below). The reply includes the output (attached when long).
+
+When the provider supports `compose config --hash` (Docker Compose and the docker-compose provider for Podman), the plan compares each service's hash with the `com.docker.compose.config-hash` label on its containers:
+
+- unchanged services: `compose up -d --no-recreate SERVICES…` (starts them if stopped, never recreates);
+- new or changed services: `compose up -d --no-deps SERVICES…`, after the unchanged ones so their dependencies are already running.
+
+Botman makes this decision itself because docker-compose on Podman recreates every container on a plain `up`, even unchanged ones, which would restart databases on every apply. The trade-off: an unchanged service whose image was replaced outside Botman (for example a manual `pull`) is not recreated; managed apps are unaffected because `/update` and `/rebuild` always recreate. podman-compose has no `config --hash`, so there Botman runs one plain `compose up -d SERVICES…`, and podman-compose itself leaves unchanged containers alone.
+
+The net effect is that new services are created, changed ones recreated, stopped ones started, and everything else left alone. Volumes and networks are never deleted. Removing a service from the file and applying is how a service is deleted. The `/config compose upload` reply has an **Apply now** button that opens the same preview.
 
 Logging state changes are the exception: `/livelogs start/stop` may rewrite agent config and restart `botman-log-agent` because that changes only the logging transport, not the app deployment.

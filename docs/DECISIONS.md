@@ -27,6 +27,8 @@ This file records the decisions explicitly settled with the user for the fresh i
 ## Compose and filesystem
 
 - Compose YAML is configured/uploaded via Botman, not taken from each app repo.
+- The installed Compose file is the source of truth for what runs. A configured app whose service is absent is **disabled**: its commands are refused, but its config, env file, releases, deploy key, and Git cache are kept until the app is deleted explicitly.
+- `/config compose apply` is the only stack-wide `up`. It previews its plan and needs confirmation; it removes containers of services dropped from the file but never deletes volumes or networks.
 - Managed app source is placed under a standard Botman-controlled stack layout; arbitrary deploy paths should not be necessary.
 - Persistent application data must not live in a release/code directory.
 - Named volumes are acceptable; bind mounts to explicit shared paths outside release directories are only acceptable when deliberately configured.

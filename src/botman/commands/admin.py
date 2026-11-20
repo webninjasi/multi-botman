@@ -13,6 +13,7 @@ from ..compose import (
 from ..config import ConfigStore
 from ..git import GitAdminService
 from ..live_logs import ServerAgentLockRegistry
+from .compose_apply import apply_now_view, send_apply_preview
 from .replies import send_file_preview
 
 
@@ -275,13 +276,41 @@ def register_admin_commands(
             payload = await file.read()
             config = store.load()
             stack, _ = config.stack_for_channel(interaction.channel_id)
-            result = await ComposeAdminService(store, locks=locks).upload(stack, payload)
+            service = ComposeAdminService(store, locks=locks)
+            result = await service.upload(stack, payload)
             normalized = result.stdout.strip()
             message = f"Compose configuration for `{stack}` validated and installed."
             if normalized:
                 message += " Runtime `compose config` passed."
-            message += " Run `/apply APP` to recreate affected services (`/rebuild APP` for build changes)."
-            await interaction.followup.send(message, ephemeral=True)
+            message += (
+                " Nothing was restarted. Apply it with the button or `/config compose apply`"
+                " (`/rebuild APP` for build changes)."
+            )
+            await interaction.followup.send(
+                message,
+                view=apply_now_view(service, stack, authorize=authorize),
+                ephemeral=True,
+            )
+        except Exception as exc:
+            await fail(interaction, exc)
+
+    @compose_group.command(
+        name="apply", description="Preview, then bring the stack in line with its Compose file."
+    )
+    async def compose_apply(interaction: discord.Interaction):
+        if not await begin(interaction):
+            return
+        try:
+            if interaction.channel_id is None:
+                raise ValueError("Compose apply must be run in a configured stack channel")
+            config = store.load()
+            stack, _ = config.stack_for_channel(interaction.channel_id)
+            await send_apply_preview(
+                interaction,
+                ComposeAdminService(store, locks=locks),
+                stack,
+                authorize=authorize,
+            )
         except Exception as exc:
             await fail(interaction, exc)
 

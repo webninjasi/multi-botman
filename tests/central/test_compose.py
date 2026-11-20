@@ -50,14 +50,32 @@ def config_two_apps(*, ssh: bool = False) -> BotmanConfig:
     )
 
 
+INSTALLED_COMPOSE = "services: {svc-a: {}, svc-b: {}, svc-new: {}}\n"
+
+
 class RecordingExecutor:
-    def __init__(self, *, delay: float = 0.0, activity: list | None = None) -> None:
+    """Records Compose commands; answers the enabled-check `cat` without recording it."""
+
+    def __init__(
+        self,
+        *,
+        delay: float = 0.0,
+        activity: list | None = None,
+        compose: str | None = INSTALLED_COMPOSE,
+    ) -> None:
         self.calls: list[tuple[str, ...]] = []
         self.delay = delay
         self.activity = activity
+        self.compose = compose
 
     async def run(self, argv, *, timeout=None, check=False):
         args = tuple(str(x) for x in argv)
+        if args[0] == "cat":
+            if self.compose is None:
+                return ExecResult(args, 1, "", "No such file or directory")
+            return ExecResult(args, 0, self.compose, "")
+        if args[:2] == ("test", "-e"):
+            return ExecResult(args, 0 if self.compose is not None else 1, "", "")
         self.calls.append(args)
         if self.activity is not None:
             self.activity.append(("start", args[-1]))
@@ -335,3 +353,75 @@ async def test_status_falls_back_to_whole_stack_when_ps_rejects_service() -> Non
     assert executor.calls[1][-1] == "ps"
     assert result.ok
     assert result.stdout.startswith("(this Compose provider cannot filter ps by service")
+
+
+def test_compose_validation_treats_missing_managed_service_as_disabled() -> None:
+    content = b"""
+services:
+  svc-a:
+    build: ./apps/app-a/current
+    logging: {driver: journald, options: {tag: botman-bots-app-a}}
+  db:
+    image: postgres:16
+"""
+    parsed = validate_compose_yaml(config_two_apps(), "bots", content)
+    assert set(parsed["services"]) == {"svc-a", "db"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("store_backed", [False, True])
+async def test_lifecycle_rejects_disabled_app_before_compose(tmp_path, store_backed) -> None:
+    from botman.compose import AppDisabledError
+    from botman.config import ConfigStore
+
+    cfg = config_two_apps()
+    executor = RecordingExecutor(compose="services: {svc-b: {}}\n")
+    if store_backed:
+        store = ConfigStore(tmp_path / "config.yaml")
+        await store.save(cfg)
+        service = LifecycleService(store)
+        service.compose.executor_factory = lambda _: executor
+    else:
+        service = LifecycleService(cfg, ComposeManager(cfg, executor_factory=lambda _: executor))
+
+    with pytest.raises(AppDisabledError, match="`app-a` is disabled: service `svc-a`"):
+        await service.execute("start", app_name="app-a", channel_id=111)
+    await service.execute("start", app_name="app-b", channel_id=111)
+
+    assert executor.calls[-1][-2:] == ("start", "svc-b")
+    assert len(executor.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_without_installed_compose_file_points_to_upload() -> None:
+    from botman.compose import AppDisabledError
+
+    cfg = config_two_apps()
+    executor = RecordingExecutor(compose=None)
+    service = LifecycleService(cfg, ComposeManager(cfg, executor_factory=lambda _: executor))
+
+    with pytest.raises(AppDisabledError, match="no Compose file yet"):
+        await service.execute("status", app_name="app-a", channel_id=111)
+    assert executor.calls == []
+
+
+@pytest.mark.parametrize(
+    "compose_argv, runtime",
+    [
+        (("docker", "compose"), ("docker",)),
+        (("sudo", "podman", "compose"), ("sudo", "podman")),
+        (("podman-compose",), ("podman",)),
+        (("/usr/bin/docker-compose",), ("docker",)),
+    ],
+)
+def test_container_runtime_is_derived_from_compose_argv(compose_argv, runtime) -> None:
+    from botman.compose import container_runtime_argv
+
+    assert container_runtime_argv(compose_argv) == runtime
+
+
+def test_container_runtime_derivation_rejects_unknown_command() -> None:
+    from botman.compose import container_runtime_argv
+
+    with pytest.raises(ValueError, match="cannot find docker or podman"):
+        container_runtime_argv(("nerdctl", "compose"))

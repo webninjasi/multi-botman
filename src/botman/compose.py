@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Literal
 
@@ -268,6 +270,9 @@ class LifecycleService:
     ) -> ExecResult:
         if not isinstance(self.config_source, ConfigStore):
             resolved = authorize_app_channel(self.config_source, app_name, channel_id)
+            await require_enabled(
+                self.compose.executor_factory(resolved), self.config_source, resolved
+            )
             method = getattr(self.compose, operation)
             return await method(resolved)
 
@@ -278,12 +283,32 @@ class LifecycleService:
             resolved = authorize_app_channel(config, app_name, channel_id)
             if resolved.stack_name != initial.stack_name:
                 raise RuntimeError("app stack changed while waiting for lifecycle lock; retry")
+            await require_enabled(self.compose.executor_factory(resolved), config, resolved)
             fresh = ComposeManager(
                 config,
                 executor_factory=self.compose.executor_factory,
                 locks=self.compose.locks,
             )
             return await fresh.execute_unlocked(operation, resolved)
+
+
+def parse_compose_yaml(content: bytes | str, *, max_bytes: int = MAX_COMPOSE_BYTES) -> dict:
+    """Safely parse a Compose document that has a `services` mapping."""
+
+    raw_bytes = content.encode("utf-8") if isinstance(content, str) else content
+    if len(raw_bytes) > max_bytes:
+        raise ComposeValidationError(
+            f"Compose file is {len(raw_bytes)} bytes; limit is {max_bytes}"
+        )
+    try:
+        parsed = yaml.safe_load(raw_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise ComposeValidationError(f"invalid Compose YAML: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise ComposeValidationError("Compose document must be a YAML mapping")
+    if not isinstance(parsed.get("services"), dict):
+        raise ComposeValidationError("Compose document must contain a services mapping")
+    return parsed
 
 
 def validate_compose_yaml(
@@ -293,29 +318,24 @@ def validate_compose_yaml(
     *,
     max_bytes: int = MAX_COMPOSE_BYTES,
 ) -> dict:
-    raw_bytes = content.encode("utf-8") if isinstance(content, str) else content
-    if len(raw_bytes) > max_bytes:
-        raise ComposeValidationError(
-            f"Compose attachment is {len(raw_bytes)} bytes; limit is {max_bytes}"
-        )
-    try:
-        parsed = yaml.safe_load(raw_bytes.decode("utf-8"))
-    except (UnicodeDecodeError, yaml.YAMLError) as exc:
-        raise ComposeValidationError(f"invalid Compose YAML: {exc}") from exc
-    if not isinstance(parsed, dict):
-        raise ComposeValidationError("Compose document must be a YAML mapping")
-    services = parsed.get("services")
-    if not isinstance(services, dict):
-        raise ComposeValidationError("Compose document must contain a services mapping")
+    """Validate the services of managed apps that the Compose file defines.
+
+    The Compose file is the source of truth for what runs: a managed app whose
+    service is absent is disabled, not an error. Its config is kept until the
+    app is deleted explicitly.
+    """
+
+    parsed = parse_compose_yaml(content, max_bytes=max_bytes)
+    services = parsed["services"]
     if stack_name not in config.stacks:
         raise ComposeValidationError(f"unknown stack: {stack_name}")
 
     for app_name, app in config.stacks[stack_name].apps.items():
-        service = services.get(app.service)
+        if app.service not in services:
+            continue
+        service = services[app.service]
         if not isinstance(service, dict):
-            raise ComposeValidationError(
-                f"managed app {app_name!r} requires service {app.service!r}"
-            )
+            raise ComposeValidationError(f"service {app.service!r} must be a mapping")
         logging = service.get("logging")
         if not isinstance(logging, dict) or logging.get("driver") != "journald":
             raise ComposeValidationError(
@@ -359,6 +379,103 @@ class ComposeRuntimeValidationError(RuntimeError):
 
 class ComposeTransportError(RuntimeError):
     """Compose file transport or activation failed."""
+
+
+class AppDisabledError(RuntimeError):
+    """The app's service is not in the installed Compose file (or there is none)."""
+
+
+class ComposeApplyStaleError(RuntimeError):
+    """The Compose file or stack changed between the apply preview and confirmation."""
+
+
+async def read_installed_compose_text(
+    executor: Executor, config: BotmanConfig, stack_name: str
+) -> str | None:
+    """Return the installed Compose file's text, or None when there is none.
+
+    `cat` keeps the common path to one remote command; `test -e` only runs to
+    tell a missing file from an unreadable one.
+    """
+
+    path = str(config.compose_path(stack_name))
+    result = await executor.run(("cat", "--", path), timeout=30, check=False)
+    if result.ok:
+        return result.stdout
+    probe = await executor.run(("test", "-e", path), timeout=30, check=False)
+    if not probe.ok:
+        return None
+    detail = result.stderr.strip() or f"exit {result.returncode}"
+    raise ComposeTransportError(f"cannot read {path}: {detail}")
+
+
+async def require_enabled(executor: Executor, config: BotmanConfig, resolved: ResolvedApp) -> None:
+    """Reject commands for an app whose service is absent from the Compose file."""
+
+    text = await read_installed_compose_text(executor, config, resolved.stack_name)
+    if text is None:
+        raise AppDisabledError(
+            f"Stack `{resolved.stack_name}` has no Compose file yet; "
+            "upload one with `/config compose upload`."
+        )
+    services = parse_compose_yaml(text)["services"]
+    if resolved.app.service not in services:
+        raise AppDisabledError(
+            f"`{resolved.name}` is disabled: service `{resolved.app.service}` is not in "
+            f"`{resolved.stack.compose_file}`. Add it back and run `/config compose apply` "
+            "to enable it."
+        )
+
+
+def container_runtime_argv(compose_argv: tuple[str, ...]) -> tuple[str, ...]:
+    """Derive the container CLI (`docker`/`podman`) from a configured Compose command.
+
+    Keeps any prefix such as `sudo`, so `sudo podman compose` gives `sudo podman`
+    and `podman-compose` gives `podman`.
+    """
+
+    for index, part in enumerate(compose_argv):
+        name = PurePosixPath(part).name
+        for runtime in ("docker", "podman"):
+            if name in (runtime, f"{runtime}-compose"):
+                return (*compose_argv[:index], runtime)
+    raise ValueError(
+        f"cannot find docker or podman in the Compose command {' '.join(compose_argv)!r}"
+    )
+
+
+def _depends_on(spec: object) -> tuple[str, ...]:
+    if not isinstance(spec, dict):
+        return ()
+    deps = spec.get("depends_on")
+    if isinstance(deps, dict):
+        return tuple(str(name) for name in deps)
+    if isinstance(deps, list):
+        return tuple(str(name) for name in deps)
+    return ()
+
+
+@dataclass(frozen=True, slots=True)
+class ComposeApplyPlan:
+    """What `/config compose apply` would do, shown before it runs."""
+
+    stack_name: str
+    digest: str
+    services: tuple[str, ...]
+    skipped: tuple[tuple[str, str], ...]
+    orphans: tuple[str, ...]
+    # Services whose containers already carry the file's config hash. None when
+    # the provider cannot report hashes (podman-compose), so `up` decides alone.
+    unchanged: tuple[str, ...] | None = None
+
+    @property
+    def changed(self) -> tuple[str, ...]:
+        unchanged = self.unchanged or ()
+        return tuple(service for service in self.services if service not in unchanged)
+
+    @property
+    def empty(self) -> bool:
+        return not self.services and not self.orphans
 
 
 class ComposeAdminService:
@@ -463,6 +580,205 @@ class ComposeAdminService:
                 return result
             finally:
                 await executor.run(("rm", "-f", "--", str(staged)), timeout=30, check=False)
+
+    async def plan_apply(self, stack_name: str) -> ComposeApplyPlan:
+        """Preview a state-changing `/config compose apply` without running it."""
+
+        config = self._config()
+        executor = self.executor_factory(self._resolved_for_stack(config, stack_name))
+        plan, _ = await self._plan(executor, config, stack_name)
+        return plan
+
+    async def apply(self, stack_name: str, expected: ComposeApplyPlan) -> ExecResult:
+        """Run a previewed plan: remove orphaned containers, then `up -d` the rest.
+
+        The plan is recomputed under the stack lock and must match the preview,
+        so a Compose upload, deployment, or container change in between cannot
+        make this act on something the operator did not confirm.
+        """
+
+        lock = await self.locks.get(stack_name)
+        async with lock:
+            config = self._config()
+            executor = self.executor_factory(self._resolved_for_stack(config, stack_name))
+            plan, orphan_ids = await self._plan(executor, config, stack_name)
+            if plan != expected:
+                raise ComposeApplyStaleError(
+                    "the Compose file or the stack changed since the preview; "
+                    "run `/config compose apply` again"
+                )
+            server = config.servers[config.stacks[stack_name].server]
+            steps: list[tuple[str, ExecResult]] = []
+            if plan.orphans:
+                ids = [cid for service in plan.orphans for cid in orphan_ids[service]]
+                runtime = container_runtime_argv(server.compose_argv)
+                removed = await executor.run((*runtime, "rm", "-f", *ids), timeout=120)
+                steps.append(("remove orphans", removed))
+                if not removed.ok:
+                    return _combine_steps(*steps)
+            # `up` builds a service only when its image is missing, which the
+            # plan rules out for managed apps by skipping undeployed ones.
+            base = self._base_argv(config, stack_name, config.compose_path(stack_name))
+            if plan.unchanged is None:
+                if plan.services:
+                    up = await executor.run((*base, "up", "-d", *plan.services), timeout=780)
+                    steps.append(("up", up))
+            else:
+                # docker-compose on Podman recreates every container on `up`,
+                # even unchanged ones, so Botman decides from the config hashes.
+                # Unchanged services go first so stopped dependencies are
+                # running before changed services start; `--no-recreate` also
+                # covers the dependencies `up` pulls in.
+                if plan.unchanged:
+                    kept = await executor.run(
+                        (*base, "up", "-d", "--no-recreate", *plan.unchanged), timeout=300
+                    )
+                    steps.append(("up unchanged", kept))
+                    if not kept.ok:
+                        return _combine_steps(*steps)
+                if plan.changed:
+                    up = await executor.run(
+                        (*base, "up", "-d", "--no-deps", *plan.changed), timeout=600
+                    )
+                    steps.append(("up changed", up))
+            if not steps:
+                return ExecResult((), 0, "nothing to apply", "")
+            return _combine_steps(*steps)
+
+    async def _plan(
+        self, executor: Executor, config: BotmanConfig, stack_name: str
+    ) -> tuple[ComposeApplyPlan, dict[str, list[str]]]:
+        text = await read_installed_compose_text(executor, config, stack_name)
+        if text is None:
+            raise ComposeTransportError(
+                f"stack `{stack_name}` has no Compose file; upload one with `/config compose upload`"
+            )
+        services = parse_compose_yaml(text)["services"]
+        stack = config.stacks[stack_name]
+
+        skipped: dict[str, str] = {}
+        for service, spec in services.items():
+            if isinstance(spec, dict) and spec.get("profiles"):
+                skipped[service] = "has `profiles`, which a plain `up` does not start"
+        managed = {
+            app.service: app_name
+            for app_name, app in stack.apps.items()
+            if app.service in services
+        }
+        deployed = await self._deployed_apps(executor, config, stack_name, managed.values())
+        for service, app_name in managed.items():
+            if app_name not in deployed:
+                skipped.setdefault(
+                    service, f"`{app_name}` is not deployed yet; run `/update {app_name}`"
+                )
+        # `up SERVICE` also starts its dependencies, so a service depending on
+        # a skipped one would fail or start it anyway.
+        changed = True
+        while changed:
+            changed = False
+            for service, spec in services.items():
+                if service in skipped:
+                    continue
+                blocked = next((dep for dep in _depends_on(spec) if dep in skipped), None)
+                if blocked is not None:
+                    skipped[service] = f"depends on skipped `{blocked}`"
+                    changed = True
+
+        containers = await self._project_containers(executor, config, stack_name)
+        orphan_ids = {
+            service: [cid for cid, _ in found]
+            for service, found in containers.items()
+            if service not in services
+        }
+        planned = tuple(service for service in services if service not in skipped)
+        hashes = await self._config_hashes(executor, config, stack_name)
+        unchanged = None
+        if hashes is not None:
+            unchanged = tuple(
+                service
+                for service in planned
+                if service in hashes
+                and containers.get(service)
+                and all(found_hash == hashes[service] for _, found_hash in containers[service])
+            )
+        plan = ComposeApplyPlan(
+            stack_name=stack_name,
+            digest=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            services=planned,
+            skipped=tuple((service, skipped[service]) for service in services if service in skipped),
+            orphans=tuple(sorted(orphan_ids)),
+            unchanged=unchanged,
+        )
+        return plan, orphan_ids
+
+    async def _config_hashes(
+        self, executor: Executor, config: BotmanConfig, stack_name: str
+    ) -> dict[str, str] | None:
+        """Per-service config hashes as `up` would label them, or None if unsupported."""
+
+        base = self._base_argv(config, stack_name, config.compose_path(stack_name))
+        result = await executor.run((*base, "config", "--hash", "*"), timeout=60, check=False)
+        if not result.ok:
+            return None
+        hashes = {}
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) == 2:
+                hashes[parts[0]] = parts[1]
+        return hashes or None
+
+    @staticmethod
+    async def _deployed_apps(
+        executor: Executor, config: BotmanConfig, stack_name: str, app_names
+    ) -> set[str]:
+        """Apps whose `current` release resolves to a directory, in one remote call."""
+
+        paths = {
+            str(config.app_release_root(stack_name, app_name) / "current"): app_name
+            for app_name in app_names
+        }
+        if not paths:
+            return set()
+        # `ls` exits non-zero when any path is missing but still lists the rest.
+        listed = await executor.run(("ls", "-1dL", "--", *paths), timeout=30, check=False)
+        return {paths[line] for line in listed.stdout.splitlines() if line in paths}
+
+    @staticmethod
+    async def _project_containers(
+        executor: Executor, config: BotmanConfig, stack_name: str
+    ) -> dict[str, list[tuple[str, str]]]:
+        """(container ID, config hash) of the stack's Compose project, keyed by service label.
+
+        Uses the container runtime rather than `compose ps`, which only knows the
+        services still in the file and cannot filter by service on podman-compose.
+        """
+
+        stack = config.stacks[stack_name]
+        runtime = container_runtime_argv(config.servers[stack.server].compose_argv)
+        listed = await executor.run(
+            (
+                *runtime, "ps", "-a", "-q", "--no-trunc",
+                "--filter", f"label=com.docker.compose.project={stack.project_name}",
+            ),
+            timeout=60,
+            check=True,
+        )
+        ids = listed.stdout.split()
+        if not ids:
+            return {}
+        labels = (
+            '{{index .Config.Labels "com.docker.compose.service"}} '
+            '{{index .Config.Labels "com.docker.compose.config-hash"}}'
+        )
+        inspected = await executor.run(
+            (*runtime, "inspect", "--format", labels, *ids), timeout=60, check=True
+        )
+        containers: dict[str, list[tuple[str, str]]] = {}
+        for container_id, line in zip(ids, inspected.stdout.splitlines()):
+            service, _, config_hash = line.strip().partition(" ")
+            if service and service != "<no value>":
+                containers.setdefault(service, []).append((container_id, config_hash.strip()))
+        return containers
 
     async def show(self, stack_name: str) -> str:
         config = self._config()

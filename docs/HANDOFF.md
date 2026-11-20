@@ -53,7 +53,7 @@ Read [`DECISIONS.md`](DECISIONS.md) for full detail. Key constraints:
 - Stack command channel is the lifecycle/log/update authorization boundary; commands resolve channel -> stack before looking up an app.
 - App names are stack-local, not global. Different stacks may both use names such as `app`, `db`, or `worker`.
 - Stack and app are distinct: one stack has one server/channel/Compose project; multiple independently versioned apps may share it.
-- Compose is Botman-managed, not app-repo-owned.
+- Compose is Botman-managed, not app-repo-owned. The installed file is the source of truth: an app missing from it is disabled (commands refused, config/source kept until explicit deletion).
 - Git credentials stay on central; each app gets a separate central deploy key.
 - `/update` is v1's only deployment trigger.
 - Deployment uses exact Git SHA -> archive -> checksum -> staged release -> atomic `current` -> service-only build/up with rollback attempt.
@@ -91,7 +91,7 @@ Slash/admin/ephemeral (stack/app-scoped commands infer the stack from the curren
 - `/config server add|edit|test`
 - `/config stack add|edit`
 - `/config app add|edit`
-- `/config compose upload|show`
+- `/config compose upload|show|apply` (`apply` previews, then removes dropped services' containers and runs `up -d` for the rest; never deletes volumes/networks)
 - `/config git setup APP` / `/config git rotate-key APP`
 - `/config agent sync|status`
 
@@ -106,9 +106,10 @@ See [`VPS_AND_DISCORD_SETUP.md`](VPS_AND_DISCORD_SETUP.md) for the exact onboard
 1. Confirm CI is green on Linux (tests on 3.11-3.13, Ruff, mypy) and record the new test count here.
 2. Run `botman-target-preflight` on each real target, then run actual Linux/cysystemd integration for the live reader and historical exporter, including retained-history and journal-permission checks.
 3. Repeat Docker and Podman Compose acceptance on real targets over SSH (CI covers the local-executor path only).
-4. Run a Discord test-guild acceptance pass for hybrid command registration, threads, webhooks, upload limits, archived/locked thread behavior, and live-log batching cadence against webhook rate limits.
+4. Run a Discord test-guild acceptance pass for hybrid command registration, threads, webhooks, upload limits, archived/locked thread behavior, the `/config compose apply` and upload **Apply now** buttons, and live-log batching cadence against webhook rate limits.
 5. Exercise `scripts/setup.sh` and `scripts/update.sh` on the real central and second target VPS, including reboot persistence of the rootless Podman socket.
 6. Reconcile runtime-specific findings before v1 completion.
+7. Add `/config app remove APP` for disabled apps: remove any leftover container and image, `apps/APP/`, the env file, live-log subscription (then agent sync), deploy key, Git cache, and config entry; never volumes. Optionally a later opt-in stack `prune` for unused volumes/networks.
 
 Do **not** repair or reuse archived `py/agent/log_agent.py` or deployment code as the implementation baseline.
 
